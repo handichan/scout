@@ -1,6 +1,5 @@
 from pathlib import Path
 import sys
-
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from scout import ecm_prep  # noqa: E402
@@ -10,9 +9,7 @@ from scout import run  # noqa: E402
 
 def run_workflow():
     # Run ecm_prep.py
-    opts = ecm_args(
-        ["--add_typ_eff", "--rp_persist", "--alt_regions_option", "EMM"]
-    )
+    opts = ecm_args(["--alt_regions_option", "EMM"])
     ecm_prep.main(opts)
 
     # Run run.py
