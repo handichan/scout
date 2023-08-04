@@ -57,20 +57,24 @@ jobs:
         run: |
           psrecord --log memory_log.txt --interval 1 "python tests/integration_testing/run_workflow.py"
           (echo -e; echo "# Elapsed time,CPU (%),Peak Real (MB),Peak Virtual (MB)"; grep -v "time" memory_log.txt | sort -k3 -n -r | head -n 1 | column -t | tr -s '[:blank:]' ',') >> tests/integration_testing/results/profile_ecm_prep.csv
+          mv ./results/*.json ./tests/integration_testing/results
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
           name: results
-          path: ./results/*.json
+          path: ./tests/integration_testing/*{.json,.csv}
       - name: Commit test results
         run: |
           branch_name="${{ github.head_ref }}"
           git pull origin $branch_name
-          cp -r ./results/*.json ./tests/integration_testing/results
+          git config --system user.email "github-action@users.noreply.github.com"
+          git config --system user.name "GitHub Action"
+
+          if [[ $branch_name == 'refs/heads/profiler' ]]; then
+            git add ./tests/integration_testing/*.csv
+          fi
           git add ./tests/integration_testing/*.json
           if [[ $(git diff --cached --exit-code) ]]; then
-            git config --system user.email "github-action@users.noreply.github.com"
-            git config --system user.name "GitHub Action"
             git commit -m "Upload test results."
             echo "Pushing to branch: $branch_name"
             git push -u origin $branch_name
