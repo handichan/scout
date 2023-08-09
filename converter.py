@@ -32,11 +32,11 @@ import numpy as np
 import json
 import argparse
 import pandas as pd
+from backoff import on_exception, expo
 from collections import OrderedDict
 
 
 class UsefulVars(object):
-
     """Class of variables that are handy to have widely available.
 
     Attributes:
@@ -51,10 +51,10 @@ class UsefulVars(object):
     """
 
     def __init__(self):
-        self.ss_conv_file = ('supporting_data/convert_data/' +
+        self.ss_conv_file = ('supporting_data/convert_data/' +  # TEMP - is this being used?
                              'site_source_co2_conversions.json')
         self.ss_conv_file_out = ('supporting_data/convert_data/' +
-                                 'site_source_co2_conversions-new.json')
+                                 'site_source_co2_conversions-new.json')  # TEMP - change to appending new to file name
         self.emm_conv_file = ('supporting_data/convert_data/' +
                               'emm_region_emissions_prices.json')
         self.emm_conv_file_out = ('supporting_data/convert_data/' +
@@ -63,14 +63,13 @@ class UsefulVars(object):
                               'EMM_State_ColSums.txt')
         self.state_baseline_data = ('supporting_data/convert_data/' +
                                     'EIA_State_Emissions_Prices_Baselines_' +
-                                    '2020.csv')
+                                    '2020.csv')  # TEMP - WHY DOES THIS HAVE A YEAR IN IT?
         self.state_conv_file_out = ('supporting_data/convert_data/' +
                                     'state_emissions_prices-updated.json')
         self.metadata = ('metadata.json')
 
 
 class ValidQueries(object):
-
     """Define valid query options for AEO data requested via the EIA data API
 
     Attributes:
@@ -91,12 +90,12 @@ class ValidQueries(object):
     """
 
     def __init__(self):
-        self.years = ['2018', '2019', '2020', '2021', '2022']
-        self.emm_years = ['2020', '2021', '2022']
+        self.years = ['2018', '2019', '2020', '2021', '2022', '2023']
+        self.emm_years = ['2020', '2021', '2022', '2023']
         self.cases = ['REF2018', 'REF2019', 'REF2020', 'REF2021', 'REF2022',
-                      'CO2FEE25', 'LOWOGS', 'LORENCST']
-        self.emm_cases = ['REF2020', 'REF2021', 'REF2022', 'LOWOGS',
-                          'LORENCST']
+                      'REF2023', 'CO2FEE25', 'LOWOGS', 'LORENCST']
+        self.emm_cases = ['REF2020', 'REF2021', 'REF2022', 'REF2023',
+                          'LOWOGS', 'LORENCST']
         self.regions_dict = OrderedDict({'WECCB': 'BASN',
                                          'WECCCAN': 'CANO',
                                          'WECCCAS': 'CASO',
@@ -124,8 +123,7 @@ class ValidQueries(object):
                                          'TRE': 'TRE'})
 
 
-class EIAQueryData(object):
-
+class EIAQueries(object):
     """Reference strings for obtaining required data from EIA AEO
 
     Attributes:
@@ -139,62 +137,47 @@ class EIAQueryData(object):
             AEO release year specified by the user.
         data_names_emm (list): A list of strings to use as keys for
             the EMM data pulled from the AEO and added to a dict.
+        # TEMP - add new attributes
     """
     def __init__(self, yr, scen):
         self.data_series = [
-            'AEO.' + yr + '.' + scen + '.CNSM_NA_ELEP_NA_HYD_CNV_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_NA_ELEP_NA_GEOTHM_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_NA_ELEP_NA_SLR_THERM_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_NA_ELEP_NA_SLR_PHTVL_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_NA_ELEP_NA_WND_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_ALLS_NA_ELC_DELV_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_ALLS_NA_ERL_DELV_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_RESD_NA_ELC_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_RESD_NA_ERL_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_ERL_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_ELC_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_RESD_NA_ELC_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_COMM_NA_ELC_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_RESD_NA_ELC_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_COMM_NA_ELC_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_RESD_NA_NG_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_NG_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_RESD_NA_NG_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_COMM_NA_NG_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_RESD_NA_NG_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_COMM_NA_NG_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_RESD_NA_LFL_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_RESD_NA_PET_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_LFL_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_COMM_NA_PET_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_CL_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.EMI_CO2_COMM_NA_CL_NA_NA_MILLMETNCO2.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_RESD_NA_PROP_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_RESD_NA_DFO_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_RESD_NA_PROP_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_RESD_NA_DFO_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_COMM_NA_PROP_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_COMM_NA_DFO_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen +
-            '.PRCE_REAL_COMM_NA_RFL_NA_NA_Y13DLRPMMBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_PROP_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_DFO_NA_NA_QBTU.A',
-            'AEO.' + yr + '.' + scen + '.CNSM_ENU_COMM_NA_RFO_NA_NA_QBTU.A']
+            'cnsm_NA_elep_NA_hyd_cnv_NA_qbtu',
+            'cnsm_NA_elep_NA_geothm_NA_NA_qbtu',
+            'cnsm_NA_elep_NA_slr_therm_NA_qbtu',
+            'cnsm_NA_elep_NA_slr_phtvl_NA_qbtu',
+            'cnsm_NA_elep_NA_wnd_NA_NA_qbtu',
+            'cnsm_enu_alls_NA_elc_delv_NA_qbtu',
+            'cnsm_enu_alls_NA_erl_delv_NA_qbtu',
+            'cnsm_enu_resd_NA_elc_NA_NA_qbtu',
+            'cnsm_enu_resd_NA_erl_NA_NA_qbtu',
+            'cnsm_enu_comm_NA_erl_NA_NA_qbtu',
+            'cnsm_enu_comm_NA_elc_NA_NA_qbtu',
+            'emi_co2_resd_NA_elc_NA_NA_millmetnco2',
+            'emi_co2_comm_NA_elc_NA_NA_millmetnco2',
+            'prce_real_resd_NA_elc_NA_NA_y13dlrpmmbtu',
+            'prce_real_comm_NA_elc_NA_NA_y13dlrpmmbtu',
+            'cnsm_enu_resd_NA_ng_NA_NA_qbtu',
+            'cnsm_enu_comm_NA_ng_NA_NA_qbtu',
+            'emi_co2_resd_NA_ng_NA_NA_millmetnco2',
+            'emi_co2_comm_NA_ng_NA_NA_millmetnco2',
+            'prce_real_resd_NA_ng_NA_NA_y13dlrpmmbtu',
+            'prce_real_comm_NA_ng_NA_NA_y13dlrpmmbtu',
+            'cnsm_enu_resd_NA_lfl_NA_NA_qbtu',
+            'emi_co2_resd_NA_pet_NA_NA_millmetnco2',
+            'cnsm_enu_comm_NA_lfl_NA_NA_qbtu',
+            'emi_co2_comm_NA_pet_NA_NA_millmetnco2',
+            'cnsm_enu_comm_NA_cl_NA_NA_qbtu',
+            'emi_co2_comm_NA_cl_NA_NA_millmetnco2',
+            'prce_real_resd_NA_prop_NA_NA_y13dlrpmmbtu',
+            'prce_real_resd_NA_dfo_NA_NA_y13dlrpmmbtu',
+            'cnsm_enu_resd_NA_prop_NA_NA_qbtu',
+            'cnsm_enu_resd_NA_dfo_NA_NA_qbtu',
+            'prce_real_comm_NA_prop_NA_NA_y13dlrpmmbtu',
+            'prce_real_comm_NA_dfo_NA_NA_y13dlrpmmbtu',
+            'prce_real_comm_NA_rfl_NA_NA_y13dlrpmmbtu',
+            'cnsm_enu_comm_NA_prop_NA_NA_qbtu',
+            'cnsm_enu_comm_NA_dfo_NA_NA_qbtu',
+            'cnsm_enu_comm_NA_rfo_NA_NA_qbtu']
 
         self.data_names = [
             'elec_renew_hydro',
@@ -235,29 +218,58 @@ class EIAQueryData(object):
             'distl_com_energy',
             'rsid_com_energy']
 
+        self.nonstandard_query_reqd = self.data_series[0:5]
+
         self.data_series_emm = []
         self.data_names_emm = []
 
+        # TEMP - pass regions into __init__ instead of calling the ValidQueries class'???
         for reg in list(ValidQueries().regions_dict.keys()):
-            self.data_series_emm.append(['AEO.' + yr + '.' + scen +
-                                         '.EMI_CO2_ELEP_NA_NA_NA_' +
-                                         reg + '_MILLTON.A',
-                                         'AEO.' + yr + '.' + scen +
-                                         '.CNSM_NA_ELEP_NA_ELC_NA_' +
-                                         reg + '_BLNKWH.A',
-                                         'AEO.' + yr + '.' + scen +
-                                         '.PRCE_NA_RESD_NA_ELC_NA_' +
-                                         reg + '_Y13CNTPKWH.A',
-                                         'AEO.' + yr + '.' + scen +
-                                         '.PRCE_NA_COMM_NA_ELC_NA_' +
-                                         reg + '_Y13CNTPKWH.A'])
-            self.data_names_emm.append(['elec_co2_total_' + reg,
-                                        'elec_sales_total_' + reg,
-                                        'elec_enduse_price_res_' + reg,
-                                        'elec_enduse_price_com_' + reg])
+            self.data_series_emm.extend([
+                'emi_co2_elep_NA_NA_NA_' + reg.lower() + '_millton',
+                'cnsm_NA_elep_NA_elc_NA_' + reg.lower() + '_blnkwh',
+                'prce_NA_resd_NA_elc_NA_' + reg.lower() + '_y13cntpkwh',
+                'prce_NA_comm_NA_elc_NA_' + reg.lower() + '_y13cntpkwh'])
+            self.data_names_emm.extend([
+                'elec_co2_total_' + reg,
+                'elec_sales_total_' + reg,
+                'elec_enduse_price_res_' + reg,
+                'elec_enduse_price_com_' + reg])
+
+        self.query = []
+        self.query_emm = []
+
+        # TEMP - add explanatory comments here ???
+        for series_id in self.data_series:
+            if series_id in self.nonstandard_query_reqd:
+                qstr = (
+                    'https://api.eia.gov/v2/aeo/' + yr +
+                    '/data/?frequency=annual&data[0]=value&facets[scenario][]=' +
+                    scen.lower() + '&facets[seriesId][]=' + series_id +
+                    '&facets[seriesId][]=' + series_id +
+                    '&sort[0][column]=period&sort[0][direction]=desc&offset=0' +
+                    '&length=5000')
+            else:
+                qstr = (
+                    'https://api.eia.gov/v2/aeo/' + yr +
+                    '/data/?frequency=annual&data[0]=value&facets[scenario][]=' +
+                    scen.lower() + '&facets[seriesId][]=' + series_id +
+                    '&sort[0][column]=period&sort[0][direction]=desc&offset=0' +
+                    '&length=5000')
+            self.query.append(qstr)
+
+        # TEMP - add explanatory comments here ???
+        for series_id in self.data_series_emm:
+            self.query_emm.append(
+                'https://api.eia.gov/v2/aeo/' + yr +
+                '/data/?frequency=annual&data[0]=value&facets[scenario][]=' +
+                scen.lower() + '&facets[seriesId][]=' + series_id +
+                '&sort[0][column]=period&sort[0][direction]=desc&offset=0' +
+                '&length=5000')
 
 
-def api_query(api_key, series_id):
+@on_exception(expo, Exception, max_tries=5)
+def api_query(api_key, query_str):
     """Execute an EIA API query and extract the data returned
 
     Execute a query of the EIA API and extract the data from the
@@ -266,19 +278,28 @@ def api_query(api_key, series_id):
     Args:
         api_key (str): EIA API key.
         series_id (str): Identifying string for a specific data series.
+        # TEMP - revise docstring to reflect changes
 
     Returns:
         A nested list of data with inner lists structured as
         [year string, data value].
     """
-    query_str = ('https://api.eia.gov/series/?series_id=' + series_id +
-                 '&api_key=' + api_key)
-    data = requests.get(query_str).json()
+    response = requests.get(query_str + '&api_key=' + api_key)
+
     try:
-        data = data['series'][0]['data']
+        data = response.json()['response']['data']
+        # Extract only the required data in the API response
+        data = [[str(x['period']), x['value']] for x in data]
     # If an invalid series_id is used, the 'series' key will not be present
     except KeyError:
-        print('\nSeries ID not available from API: ' + series_id)
+        if response.status_code == 429:  # API rate limit exceeded
+            raise Exception('Rate limit reached')
+        else:
+            print('\nAttempted query invalid: ' + query_str)
+    # # If a response is received, but not data are returned, print message  # TEMP - try to get this to trigger a skip
+    # if data.json()['response']['total'] == 0:
+    #     print('\nNo data returned for query: ' + query_str)
+
     return data
 
 
@@ -359,6 +380,7 @@ def data_getter(api_key, series_names, api_series_list):
             to use for the data in the dict.
         api_series_list (list): List of series strings to indicate
             the desired data from the EIA API call.
+        # TEMP - rename series_names variable and series iterator
 
     Returns:
         Dict with keys specified in series_names for which the
@@ -371,7 +393,7 @@ def data_getter(api_key, series_names, api_series_list):
         #     try:
         #         prev_years = years.copy()
         #     except NameError:
-        #         prev_years = None
+        #         prev_years = None  # TEMP - clean up commented code
 
         # Obtain data from EIA API; if the data returned is a dict,
         # there was an error with the series_id provided and that
@@ -386,7 +408,7 @@ def data_getter(api_key, series_names, api_series_list):
             # prior to determine if years vectors are being consistently
             # returned by the API; if so, or if there is no previous
             # years vector, record the data, otherwise raise a ValueError
-            # if isinstance(prev_years, np.ndarray):
+            # if isinstance(prev_years, np.ndarray):  # TEMP - clean up commented code
             #     if (prev_years == years).all():
             #         mstr_data_dict[series_names[idx]] = data
             #     else:
@@ -397,6 +419,7 @@ def data_getter(api_key, series_names, api_series_list):
     return mstr_data_dict, years
 
 
+# TEMP - can eliminate data_getter_emm function altogether????
 def data_getter_emm(api_key, series_names, api_series_list):
     """Get data from EIA using their data API and store in dict
 
@@ -419,39 +442,41 @@ def data_getter_emm(api_key, series_names, api_series_list):
     mstr_data_dict = {}
 
     for idx, series in enumerate(api_series_list):
-        for m in range(4):  # loop added to include EMM regions in API call
-            # try:
-            #     prev_years = years.copy()
-            # except NameError:
-            #     prev_years = None
+        # for m in range(4):  # loop added to include EMM regions in API call  # TEMP dropped this level
+        # try:
+        #     prev_years = years.copy()
+        # except NameError:
+        #     prev_years = None  # TEMP - clean up commented code
 
-            # Obtain data from EIA API; if the data returned is a dict,
-            # there was an error with the series_id provided and that
-            # output should be ignored entirely; the resulting error
-            # from the missing key in the master dict will be handled
-            # in the updater function
-            raw_data = api_query(api_key, series[m])  # indexed by m
-            if isinstance(raw_data, (list,)):
-                data, years = data_processor(raw_data)
+        # Obtain data from EIA API; if the data returned is a dict,
+        # there was an error with the series_id provided and that
+        # output should be ignored entirely; the resulting error
+        # from the missing key in the master dict will be handled
+        # in the updater function
+        print(series_names[idx])  # TEMP
+        print(series)  # TEMP
+        raw_data = api_query(api_key, series)  # indexed by m
+        if isinstance(raw_data, (list,)):
+            data, years = data_processor(raw_data)
 
-            # Check against years vector from series pulled immediately
-            # prior to determine if years vectors are being consistently
-            # returned by the API; if so, or if there is no previous
-            # years vector, record the data, otherwise raise a ValueError
-                # if isinstance(prev_years, np.ndarray):
-                #     if (prev_years == years).all():
-                #         # extra index 'm' added
-                #         mstr_data_dict[series_names[idx][m]] = data
-                #     else:
-                #         raise ValueError('Years vectors did not match.')
-                # else:
-                # extra index 'm' added
-                mstr_data_dict[series_names[idx][m]] = data
+        # Check against years vector from series pulled immediately
+        # prior to determine if years vectors are being consistently
+        # returned by the API; if so, or if there is no previous
+        # years vector, record the data, otherwise raise a ValueError
+            # if isinstance(prev_years, np.ndarray):
+            #     if (prev_years == years).all():
+            #         # extra index 'm' added
+            #         mstr_data_dict[series_names[idx][m]] = data
+            #     else:
+            #         raise ValueError('Years vectors did not match.')
+            # else:
+            # extra index 'm' added  # TEMP - clean up commented code
+            mstr_data_dict[series_names[idx]] = data
 
     return mstr_data_dict, years
 
 
-def updater(conv, api_key, aeo_yr, scen, captured_energy_method):
+def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
     """Perform calculations using EIA data to update conversion factors JSON
 
     Using data from the AEO year and specified NEMS modeling scenario,
@@ -479,14 +504,16 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method):
             for electricity. For details, refer to the DOE report
             "Accounting Methodology for Source Energy of
             Non-Combustible Renewable Electricity Generation"
+        web_version (bool): TEMP - if true, use "other" instead of
+            propane and distillate separately
 
     Returns:
         Updated conversion factors dict to be exported to the conversions JSON.
     """
 
     # Get data via EIA API
-    dq = EIAQueryData(aeo_yr, scen)
-    z, yrs = data_getter(api_key, dq.data_names, dq.data_series)
+    dq = EIAQueries(aeo_yr, scen)
+    z, yrs = data_getter(api_key, dq.data_names, dq.query)
 
     # Calculate adjustment factor to use the captured energy method
     # to account for electric source energy from renewable generation;
@@ -596,6 +623,27 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method):
         print('\nError updating commercial distillate CO2 emissions \
               intensities.')
 
+    # Residential other fuel CO2 intensities [Mt CO2/quads]
+    try:
+        co2_res_ot_ints = z['petro_res_co2']/z['petro_res_energy']
+        for idx, year in enumerate(yrs):
+            conv['other']['CO2 intensity']['data']['residential'][year] = (
+                round(co2_res_ot_ints[idx], 6))
+    except KeyError:
+        print('\nDue to failed data retrieval from the API, residential '  # TEMP - update the exception to reflect that the data could be missing from the API or in the ingested conversions file
+              '"other fuel" CO2 emissions intensities were not updated.')
+
+    # Commercial other fuel CO2 intensities [Mt CO2/quads]
+    try:
+        co2_com_ot_ints = ((z['petro_com_co2'] + z['coal_com_co2']) /
+                           (z['petro_com_energy'] + z['coal_com_energy']))
+        for idx, year in enumerate(yrs):
+            conv['other']['CO2 intensity']['data']['commercial'][year] = (
+                round(co2_com_ot_ints[idx], 6))
+    except KeyError:
+        print('\nDue to failed data retrieval from the API, commercial '
+              '"other fuel" CO2 emissions intensities were not updated.')
+
     # Residential electricity prices [$/MMBtu source]
     try:
         for idx, year in enumerate(yrs):
@@ -668,18 +716,50 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method):
         print('\nDue to failed data retrieval from the API, commercial '
               'distillate prices were not updated.')
 
+    # Residential other fuel price as energy use-weighted average
+    # of propane and distillate (fuel oil) prices [$/MMBtu source]
+    try:
+        res_other_price = (z['lpg_res_price']*z['lpg_res_energy']/(
+                            z['lpg_res_energy'] + z['distl_res_energy']) +
+                           z['distl_res_price']*z['distl_res_energy']/(
+                            z['lpg_res_energy'] + z['distl_res_energy']))
+        for idx, year in enumerate(yrs):
+            conv['other']['price']['data']['residential'][year] = (
+                round(res_other_price[idx], 6))
+    except KeyError:
+        print('\nDue to failed data retrieval from the API, residential '
+              '"other fuel" prices were not updated.')
+
+    # Commercial other fuel price as energy use-weighted average of
+    # propane, distillate (fuel oil), and residual (fuel oil) prices
+    # [$/MMBtu source]
+    try:
+        denom = z['lpg_com_energy']+z['distl_com_energy']+z['rsid_com_energy']
+        com_other_price = (z['lpg_com_price']*z['lpg_com_energy']/denom +
+                           z['distl_com_price']*z['distl_com_energy']/denom +
+                           z['rsid_com_price']*z['rsid_com_energy']/denom)
+        for idx, year in enumerate(yrs):
+            conv['other']['price']['data']['commercial'][year] = (
+                round(com_other_price[idx], 6))
+    except KeyError:
+        print('\nDue to failed data retrieval from the API, commercial '
+              '"other fuel" prices were not updated.')
+
     return conv
 
 
 def updater_emm(conv, api_key, aeo_yr, scen):
     """Perform calculations using EIA data to update EMM conversion factors
-    JSON. Using data from the AEO year and specified NEMS modeling scenario,
+    JSON.
+
+    Using data from the AEO year and specified NEMS modeling scenario,
     calculate CO2 emissions intensities and energy prices for EIA EMM regions.
     For each of the calculations performed, in case of data missing from
     the record dict 'z' not obtained from the API due to invalid series
     IDs, run each calculation and update in a try/except block to catch
     KeyErrors for missing data and address them by not updating the
     original data and printing a warning to the console for the user.
+
     Args:
         conv (dict): Data structure from conversion JSON data file.
         api_key (str): EIA API key from system environment variable.
@@ -693,8 +773,8 @@ def updater_emm(conv, api_key, aeo_yr, scen):
     """
 
     # Get data via EIA API
-    dq = EIAQueryData(aeo_yr, scen)
-    z, yrs = data_getter_emm(api_key, dq.data_names_emm, dq.data_series_emm)
+    dq = EIAQueries(aeo_yr, scen)
+    z, yrs = data_getter_emm(api_key, dq.data_names_emm, dq.query_emm)
 
     # Emissions conversion factor from short tons to metric tons
     conv_factor = 0.90718474
@@ -751,15 +831,18 @@ def updater_emm(conv, api_key, aeo_yr, scen):
     return conv
 
 
+# TEMP - I think none of these arguments are actually used by the function
 def updater_state(conv, api_key, aeo_yr, scen):
     """Perform calculations using EIA data to generate state conversion
     factors JSON.
+
     Using data from the AEO year and specified NEMS modeling scenario,
     calculate CO2 emissions intensities and energy prices for EIA EMM regions.
     Using state-level emissions and prices baseline data from EIA and
     EMM-level projections in these metrics through 2050, as well as
     EMM-level to state-level mapping factors, generate projections in
     conversion factors for all contiguous US states.
+
     Args:
         conv (dict): Data structure from conversion JSON data file.
         api_key (str): EIA API key from system environment variable.
@@ -897,46 +980,55 @@ if __name__ == '__main__':
         print('\nExpected environment variable EIA_API_KEY not set.\n'
               'Obtain an API key from EIA at https://www.eia.gov/opendata/\n'
               'On a Mac, add the API key to your environment using the '
-              'following command in Terminal (and then open a new window):'
-              "$ echo 'export EIA_API_KEY=your api key' >> ~/.bash_profile\n")
+              'following command in Terminal (and then open a new window).'
+              'For bash:'
+              "$ echo 'export EIA_API_KEY=your api key' >> ~/.bash_profile\n"
+              'For zsh:'
+              "$ echo 'export EIA_API_KEY=your api key' >> ~/.zshrc\n")
         sys.exit(1)
 
-    # Ask the user to specify the desired update to make, whether
-    # to the site_to_source conversions json or the EMM region
-    # emissions/price projections json.
-    while True:
-        geography = input('Please specify the desired file type to update. '
-                          'Valid entries are: ' +
-                          ', '.join(['National factors file',
-                                     'Regional factors file']) +
-                          '.\n')
-        if geography not in ['National factors file',
-                             'Regional factors file']:
-            print('Invalid file type entered.')
-        else:
-            break
+    # TEMP - COMMENTED OUT FOR DEVELOPMENT/TESTING PURPOSES
+    # # Ask the user to specify the desired update to make, whether  # TEMP - simplify this user option; it is a pain to type so much to make this selection
+    # # to the site_to_source conversions json or the EMM region
+    # # emissions/price projections json.
+    # while True:
+    #     geography = input('Please specify the desired file type to update. '
+    #                       'Valid entries are: ' +
+    #                       ', '.join(['National factors file',
+    #                                  'Regional factors file']) +
+    #                       '.\n')
+    #     if geography not in ['National factors file',
+    #                          'Regional factors file']:
+    #         print('Invalid file type entered.')
+    #     else:
+    #         break
 
-    # Ask the user to specify the desired report year, informing the
-    # user about the valid year options
-    while True:
-        year = input('Please specify the desired AEO year. '
-                     'Valid entries are: ' +
-                     ', '.join(ValidQueries().years) + '.\n')
-        if year not in ValidQueries().years:
-            print('Invalid year entered.')
-        else:
-            break
+    # # Ask the user to specify the desired report year, informing the
+    # # user about the valid year options
+    # while True:
+    #     year = input('Please specify the desired AEO year. '
+    #                  'Valid entries are: ' +
+    #                  ', '.join(ValidQueries().years) + '.\n')
+    #     if year not in ValidQueries().years:
+    #         print('Invalid year entered.')
+    #     else:
+    #         break
 
-    # Ask the user to specify the desired AEO case or scenario,
-    # informing the user about the valid scenario options
-    while True:
-        scenario = input('Please specify the desired AEO scenario. '
-                         'Valid entries are: ' +
-                         ', '.join(ValidQueries().cases) + '.\n')
-        if scenario not in ValidQueries().cases:
-            print('Invalid scenario entered.')
-        else:
-            break
+    # # Ask the user to specify the desired AEO case or scenario,
+    # # informing the user about the valid scenario options
+    # while True:
+    #     scenario = input('Please specify the desired AEO scenario. '
+    #                      'Valid entries are: ' +
+    #                      ', '.join(ValidQueries().cases) + '.\n')
+    #     if scenario not in ValidQueries().cases:
+    #         print('Invalid scenario entered.')
+    #     else:
+    #         break
+
+    # TEMP - ADDED FOR DEVELOPMENT/TESTING PURPOSES
+    geography = 'National factors file'
+    year = '2023'
+    scenario = 'REF2023'
 
     # Load metadata including AEO year range
     with open(UsefulVars().metadata, 'r') as aeo_yrs:
@@ -950,18 +1042,12 @@ if __name__ == '__main__':
     aeo_min = (aeo_yrs["min year"])
 
     # Update routine specific to whether user is updating site-to-source
-    # file or regional emission/price projections file.
+    # file or regional emission/price projections file
 
     if geography == 'National factors file':
-        # Set converter file variable
-        conv_file = 'site_source_co2_conversions.json'
-        # Load current file to be updated
-        conv = json.load(open('supporting_data/convert_data/' +
-                              conv_file, 'r'))
-
+        parser = argparse.ArgumentParser()
         # Set up command line argument for switching to the "captured
         # energy" method for calculating electricity site-source conversions
-        parser = argparse.ArgumentParser()
         parser.add_argument('--captured', action='store_true')
         use_captured_nrg_method = parser.parse_args().captured
         if use_captured_nrg_method:
@@ -970,6 +1056,23 @@ if __name__ == '__main__':
             method_text = 'FOSSIL FUEL EQUIVALENCE'
         print('\nATTENTION: SITE-SOURCE CONVERSIONS FOR ELECTRICITY '
               'WILL BE CALCULATED USING THE ' + method_text + ' METHOD.')
+
+        # Set up command line argument for creating web app-compatible
+        # version of site-source conversions file that outputs "other
+        # fuel" data instead of separate values for propane and distillate
+        parser.add_argument('--web', action='store_true')
+        make_web_version = parser.parse_args().web
+
+        # Set converter file name variable
+        if make_web_version:
+            conv_file = 'site_source_co2_conversions_web.json'
+        elif use_captured_nrg_method:
+            conv_file = 'site_source_co2_conversions-ce.json'
+        else:
+            conv_file = 'site_source_co2_conversions.json'
+        # Load current file to be updated
+        conv = json.load(open('supporting_data/convert_data/' +
+                              conv_file, 'r'))
 
         # Change conversion factors dict imported from JSON to OrderedDict
         # so that the AEO year and scenario specified by the user can be
