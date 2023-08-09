@@ -53,10 +53,10 @@ class UsefulVars(object):
     def __init__(self):
         self.ss_conv_file = ('supporting_data/convert_data/' +  # TEMP - is this being used?
                              'site_source_co2_conversions.json')
-        self.ss_conv_file_out = ('supporting_data/convert_data/' +
-                                 'site_source_co2_conversions-new.json')  # TEMP - change to appending new to file name
+        self.ss_conv_file_out = ('supporting_data/convert_data/' +  # TEMP - change to appending new to file name - I think this isn't being used anymore
+                                 'site_source_co2_conversions-new.json')
         self.emm_conv_file = ('supporting_data/convert_data/' +
-                              'emm_region_emissions_prices.json')
+                              'emm_region_emissions_prices.json')  # TEMP - is this still being used
         self.emm_conv_file_out = ('supporting_data/convert_data/' +
                                   'emm_region_emissions_prices-updated.json')
         self.emm_state_map = ('supporting_data/convert_data/geo_map/' +
@@ -137,7 +137,13 @@ class EIAQueries(object):
             AEO release year specified by the user.
         data_names_emm (list): A list of strings to use as keys for
             the EMM data pulled from the AEO and added to a dict.
-        # TEMP - add new attributes
+        nonstandard_query_reqd (list): A list of API series IDs whose
+            API paths do not follow the same format as other data.
+        query (list): Complete API path (URL) constructed for the
+            AEO scenario and release year specified by the user.
+        query_emm (list): Complete API path (URL) constructed for
+            each EMM region for the AEO scenario and release year
+            specified by the user.
     """
     def __init__(self, yr, scen):
         self.data_series = [
@@ -218,12 +224,9 @@ class EIAQueries(object):
             'distl_com_energy',
             'rsid_com_energy']
 
-        self.nonstandard_query_reqd = self.data_series[0:5]
-
         self.data_series_emm = []
         self.data_names_emm = []
 
-        # TEMP - pass regions into __init__ instead of calling the ValidQueries class'???
         for reg in list(ValidQueries().regions_dict.keys()):
             self.data_series_emm.extend([
                 'emi_co2_elep_NA_NA_NA_' + reg.lower() + '_millton',
@@ -239,7 +242,8 @@ class EIAQueries(object):
         self.query = []
         self.query_emm = []
 
-        # TEMP - add explanatory comments here ???
+        self.nonstandard_query_reqd = self.data_series[0:5]
+
         for series_id in self.data_series:
             if series_id in self.nonstandard_query_reqd:
                 qstr = (
@@ -258,7 +262,6 @@ class EIAQueries(object):
                     '&length=5000')
             self.query.append(qstr)
 
-        # TEMP - add explanatory comments here ???
         for series_id in self.data_series_emm:
             self.query_emm.append(
                 'https://api.eia.gov/v2/aeo/' + yr +
@@ -268,6 +271,8 @@ class EIAQueries(object):
                 '&length=5000')
 
 
+# https://stackoverflow.com/questions/22786068/
+# how-to-avoid-http-error-429-too-many-requests-python
 @on_exception(expo, Exception, max_tries=5)
 def api_query(api_key, query_str):
     """Execute an EIA API query and extract the data returned
@@ -277,12 +282,12 @@ def api_query(api_key, query_str):
 
     Args:
         api_key (str): EIA API key.
-        series_id (str): Identifying string for a specific data series.
-        # TEMP - revise docstring to reflect changes
+        query_str (str): EIA API URL for a specific data series,
+            excluding the user-specific API key.
 
     Returns:
         A nested list of data with inner lists structured as
-        [year string, data value].
+        [year, data value] where the years are YYYY strings.
     """
     response = requests.get(query_str + '&api_key=' + api_key)
 
@@ -290,15 +295,11 @@ def api_query(api_key, query_str):
         data = response.json()['response']['data']
         # Extract only the required data in the API response
         data = [[str(x['period']), x['value']] for x in data]
-    # If an invalid series_id is used, the 'series' key will not be present
     except KeyError:
         if response.status_code == 429:  # API rate limit exceeded
             raise Exception('Rate limit reached')
-        else:
+        else:  # Any other response, such as a malformed header or no data returned
             print('\nAttempted query invalid: ' + query_str)
-    # # If a response is received, but not data are returned, print message  # TEMP - try to get this to trigger a skip
-    # if data.json()['response']['total'] == 0:
-    #     print('\nNo data returned for query: ' + query_str)
 
     return data
 
@@ -321,7 +322,7 @@ def data_processor(data):
     data = np.array(data)[years.argsort()]  # Re-sort in ascending year order
     years = years[years.argsort()]  # Re-sort to be in ascending year order
 
-    # Load metadata including AEO year range
+    # Load metadata including AEO year range  # TEMP - duplicated code - repeat only once, move to new function
     with open(UsefulVars().metadata, 'r') as aeo_yrs:
         try:
             aeo_yrs = json.load(aeo_yrs)
@@ -367,7 +368,7 @@ def data_processor(data):
     return data, years
 
 
-def data_getter(api_key, series_names, api_series_list):
+def data_getter(api_key, series_names, api_urls):
     """Get data from EIA using their data API and store in dict
 
     Call the required functions to obtain data from EIA using their
@@ -378,23 +379,17 @@ def data_getter(api_key, series_names, api_series_list):
         api_key (str): EIA API key.
         series_names (list): List of strings for the desired keys
             to use for the data in the dict.
-        api_series_list (list): List of series strings to indicate
-            the desired data from the EIA API call.
-        # TEMP - rename series_names variable and series iterator
+        api_urls (list): List of paths (URLs) to obtain the desired
+            data from the EIA API.
 
     Returns:
         Dict with keys specified in series_names for which the
         values correspond to the numpy arrays of data obtained from
-        the EIA API for the series indicated in api_series_list.
+        the EIA API for the data from api_urls.
     """
     mstr_data_dict = {}
 
-    for idx, series in enumerate(api_series_list):
-        #     try:
-        #         prev_years = years.copy()
-        #     except NameError:
-        #         prev_years = None  # TEMP - clean up commented code
-
+    for idx, series in enumerate(api_urls):
         # Obtain data from EIA API; if the data returned is a dict,
         # there was an error with the series_id provided and that
         # output should be ignored entirely; the resulting error
@@ -402,81 +397,16 @@ def data_getter(api_key, series_names, api_series_list):
         # in the updater function
         raw_data = api_query(api_key, series)
         if isinstance(raw_data, (list,)):
+            # Restructure the data obtained from the API
             data, years = data_processor(raw_data)
-
-            # Check against years vector from series pulled immediately
-            # prior to determine if years vectors are being consistently
-            # returned by the API; if so, or if there is no previous
-            # years vector, record the data, otherwise raise a ValueError
-            # if isinstance(prev_years, np.ndarray):  # TEMP - clean up commented code
-            #     if (prev_years == years).all():
-            #         mstr_data_dict[series_names[idx]] = data
-            #     else:
-            #         raise ValueError('Years vectors did not match.')
-            # else:
+            # Record the data as a value in a dict with the key
+            # corresponding to the specified series name
             mstr_data_dict[series_names[idx]] = data
 
     return mstr_data_dict, years
 
 
-# TEMP - can eliminate data_getter_emm function altogether????
-def data_getter_emm(api_key, series_names, api_series_list):
-    """Get data from EIA using their data API and store in dict
-
-    Call the required functions to obtain data from EIA using their
-    data API, restructure the data into numpy arrays, and store in
-    a dict according to the specified series names for later recall.
-
-    Args:
-        api_key (str): EIA API key.
-        series_names (list): List of strings for the desired keys
-            to use for the data in the dict.
-        api_series_list (list): List of series strings to indicate
-            the desired data from the EIA API call.
-
-    Returns:
-        Dict with keys specified in series_names for which the
-        values correspond to the numpy arrays of data obtained from
-        the EIA API for the series indicated in api_series_list.
-    """
-    mstr_data_dict = {}
-
-    for idx, series in enumerate(api_series_list):
-        # for m in range(4):  # loop added to include EMM regions in API call  # TEMP dropped this level
-        # try:
-        #     prev_years = years.copy()
-        # except NameError:
-        #     prev_years = None  # TEMP - clean up commented code
-
-        # Obtain data from EIA API; if the data returned is a dict,
-        # there was an error with the series_id provided and that
-        # output should be ignored entirely; the resulting error
-        # from the missing key in the master dict will be handled
-        # in the updater function
-        print(series_names[idx])  # TEMP
-        print(series)  # TEMP
-        raw_data = api_query(api_key, series)  # indexed by m
-        if isinstance(raw_data, (list,)):
-            data, years = data_processor(raw_data)
-
-        # Check against years vector from series pulled immediately
-        # prior to determine if years vectors are being consistently
-        # returned by the API; if so, or if there is no previous
-        # years vector, record the data, otherwise raise a ValueError
-            # if isinstance(prev_years, np.ndarray):
-            #     if (prev_years == years).all():
-            #         # extra index 'm' added
-            #         mstr_data_dict[series_names[idx][m]] = data
-            #     else:
-            #         raise ValueError('Years vectors did not match.')
-            # else:
-            # extra index 'm' added  # TEMP - clean up commented code
-            mstr_data_dict[series_names[idx]] = data
-
-    return mstr_data_dict, years
-
-
-def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
+def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web):
     """Perform calculations using EIA data to update conversion factors JSON
 
     Using data from the AEO year and specified NEMS modeling scenario,
@@ -504,8 +434,8 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             for electricity. For details, refer to the DOE report
             "Accounting Methodology for Source Energy of
             Non-Combustible Renewable Electricity Generation"
-        web_version (bool): TEMP - if true, use "other" instead of
-            propane and distillate separately
+        web (bool): If true, the data output should include "other
+            fuel" instead of separate "distillate" and "propane" fields.
 
     Returns:
         Updated conversion factors dict to be exported to the conversions JSON.
@@ -591,19 +521,21 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
     try:
         for idx, year in enumerate(yrs):
             conv['propane']['CO2 intensity']['data']['residential'][year] = (
-                62.88)  # hard coded  CO2 intensity of propane
+                62.88)  # hard coded CO2 intensity of propane
     except KeyError:
-        print('\nError updating residential propane CO2 emissions \
-              intensities.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, residential '
+                  'propane CO2 emissions intensities were not updated.')
 
     # Commercial propane CO2 intensities [Mt CO2/quads]
     try:
         for idx, year in enumerate(yrs):
             conv['propane']['CO2 intensity']['data']['commercial'][year] = (
-                62.88)  # hard coded  CO2 intensity of propane
+                62.88)  # hard coded CO2 intensity of propane
     except KeyError:
-        print('\nError updating commercial propane CO2 emissions \
-              intensities.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  'propane CO2 emissions intensities were not updated.')
 
     # Residential distillate CO2 intensities [Mt CO2/quads]
     try:
@@ -611,8 +543,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['distillate']['CO2 intensity']['data']['residential'][
                 year] = (74.14)  # hard coded CO2 intensity of distillate
     except KeyError:
-        print('\nError updating residential distillate CO2 emissions \
-              intensities.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, residential '
+                  'distillate CO2 emissions intensities were not updated.')
 
     # Commercial distillate CO2 intensities [Mt CO2/quads]
     try:
@@ -620,8 +553,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['distillate']['CO2 intensity']['data']['commercial'][
                  year] = (74.14)  # hard coded CO2 intensity of distillate
     except KeyError:
-        print('\nError updating commercial distillate CO2 emissions \
-              intensities.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  'distillate CO2 emissions intensities were not updated.')
 
     # Residential other fuel CO2 intensities [Mt CO2/quads]
     try:
@@ -630,8 +564,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['other']['CO2 intensity']['data']['residential'][year] = (
                 round(co2_res_ot_ints[idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, residential '  # TEMP - update the exception to reflect that the data could be missing from the API or in the ingested conversions file
-              '"other fuel" CO2 emissions intensities were not updated.')
+        if web:
+            print('\nDue to failed data retrieval from the API, residential '
+                  '"other fuel" CO2 emissions intensities were not updated.')
 
     # Commercial other fuel CO2 intensities [Mt CO2/quads]
     try:
@@ -641,8 +576,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['other']['CO2 intensity']['data']['commercial'][year] = (
                 round(co2_com_ot_ints[idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, commercial '
-              '"other fuel" CO2 emissions intensities were not updated.')
+        if web:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  '"other fuel" CO2 emissions intensities were not updated.')
 
     # Residential electricity prices [$/MMBtu source]
     try:
@@ -686,8 +622,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['propane']['price']['data']['residential'][year] = (
                 round(z['lpg_res_price'][idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, residential '
-              'propane prices were not updated.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, residential '
+                  'propane prices were not updated.')
 
     # Commercial propane prices [$/MMBtu source]
     try:
@@ -695,8 +632,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['propane']['price']['data']['commercial'][year] = (
                 round(z['lpg_com_price'][idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, commercial '
-              'propane prices were not updated.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  'propane prices were not updated.')
 
     # Residential distillate prices [$/MMBtu source]
     try:
@@ -704,8 +642,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['distillate']['price']['data']['residential'][year] = (
                 round(z['distl_res_price'][idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, residential '
-              'distillate prices were not updated.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, residential '
+                  'distillate prices were not updated.')
 
     # Commercial distillate prices [$/MMBtu source]
     try:
@@ -713,8 +652,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['distillate']['price']['data']['commercial'][year] = (
                 round(z['distl_com_price'][idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, commercial '
-              'distillate prices were not updated.')
+        if not web:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  'distillate prices were not updated.')
 
     # Residential other fuel price as energy use-weighted average
     # of propane and distillate (fuel oil) prices [$/MMBtu source]
@@ -727,8 +667,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['other']['price']['data']['residential'][year] = (
                 round(res_other_price[idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, residential '
-              '"other fuel" prices were not updated.')
+        if web:
+            print('\nDue to failed data retrieval from the API, residential '
+                  '"other fuel" prices were not updated.')
 
     # Commercial other fuel price as energy use-weighted average of
     # propane, distillate (fuel oil), and residual (fuel oil) prices
@@ -742,8 +683,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web_version):
             conv['other']['price']['data']['commercial'][year] = (
                 round(com_other_price[idx], 6))
     except KeyError:
-        print('\nDue to failed data retrieval from the API, commercial '
-              '"other fuel" prices were not updated.')
+        if web:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  '"other fuel" prices were not updated.')
 
     return conv
 
@@ -774,7 +716,7 @@ def updater_emm(conv, api_key, aeo_yr, scen):
 
     # Get data via EIA API
     dq = EIAQueries(aeo_yr, scen)
-    z, yrs = data_getter_emm(api_key, dq.data_names_emm, dq.query_emm)
+    z, yrs = data_getter(api_key, dq.data_names_emm, dq.query_emm)
 
     # Emissions conversion factor from short tons to metric tons
     conv_factor = 0.90718474
@@ -831,40 +773,23 @@ def updater_emm(conv, api_key, aeo_yr, scen):
     return conv
 
 
-# TEMP - I think none of these arguments are actually used by the function
-def updater_state(conv, api_key, aeo_yr, scen):
+def updater_state(conv_emm, aeo_min):
     """Perform calculations using EIA data to generate state conversion
     factors JSON.
 
-    Using data from the AEO year and specified NEMS modeling scenario,
-    calculate CO2 emissions intensities and energy prices for EIA EMM regions.
     Using state-level emissions and prices baseline data from EIA and
     EMM-level projections in these metrics through 2050, as well as
     EMM-level to state-level mapping factors, generate projections in
     conversion factors for all contiguous US states.
 
     Args:
-        conv (dict): Data structure from conversion JSON data file.
-        api_key (str): EIA API key from system environment variable.
-        aeo_yr (str): The desired year of the Annual Energy Outlook
-            to query for data.
-        scen (str): The desired AEO "case" or scenario to query.
+        conv_emm (dict): Data structure from conversion JSON data file
+            populated with EMM region-structured conversion values.
+        aeo_min (int): Minimum (earliest) AEO data output year
 
     Returns:
-        New state-level conversion factors dict to be exported to a
-        conversions JSON.
+        State-level conversion factors dict to be exported to JSON.
     """
-
-    # Load metadata including AEO year range
-    with open(UsefulVars().metadata, 'r') as aeo_yrs:
-        try:
-            aeo_yrs = json.load(aeo_yrs)
-        except ValueError as e:
-            raise ValueError(
-                "Error reading in '" +
-                UsefulVars().metadata + "': " + str(e)) from None
-    # Get minimum AEO modeling year
-    aeo_min = str(aeo_yrs["min year"])
 
     # Load and clean state baselines data from CSV
     # Drop AK and HI and rename columns
@@ -891,22 +816,18 @@ def updater_state(conv, api_key, aeo_yr, scen):
     # Get prices from EMM conversion file
     emm_price_res = pd.DataFrame.from_dict(
         conv_emm['End-use electricity price']['data']['residential'],
-        orient='index')  # residential
+        orient='index')
     emm_price_com = pd.DataFrame.from_dict(
         conv_emm['End-use electricity price']['data']['commercial'],
-        orient='index')  # commercial
+        orient='index')
     # Divide each year in dataframe by base year
-    # Residential
     emm_price_res_ratios = emm_price_res.iloc[:, 1:].div(
         emm_price_res[aeo_min], axis=0)
-    # Commercial
     emm_price_com_ratios = emm_price_com.iloc[:, 1:].div(
         emm_price_com[aeo_min], axis=0)
     # Re-insert base year into new dataframe
-    # Residential
     emm_price_res_ratios.insert(0, aeo_min, '')
     emm_price_res_ratios[aeo_min] = 1.0
-    # Commercial
     emm_price_com_ratios.insert(0, aeo_min, '')
     emm_price_com_ratios[aeo_min] = 1.0
 
@@ -940,7 +861,7 @@ def updater_state(conv, api_key, aeo_yr, scen):
                              yr in emm_price_res_ratios.columns} for
                             state in state_price_res.keys()}
 
-    # Prices - commerical
+    # Prices - commercial
     state_price_com = {state:
                        {yr: np.average(emm_price_com_ratios.loc[:, yr],
                                        weights=emm_state_map.loc[:, state]) for
@@ -953,26 +874,26 @@ def updater_state(conv, api_key, aeo_yr, scen):
                              yr in emm_price_com_ratios.columns} for
                             state in state_price_com.keys()}
 
-    # Create new json file to store state factors
-    conv_state = conv_emm.copy()
-    conv_state['CO2 intensity of electricity']['data'] = state_co2_proj
-    conv_state['CO2 intensity of electricity']['source'] = 'Base year data \
-        from EIA State Electricity Data website, projected to 2050 using \
-        sales-weighted average trends in CO2 intensity for EMM regions that \
-            comprise a given state.'
-    conv_state['End-use electricity price']['data'][
-               'residential'] = state_price_res_proj
-    conv_state['End-use electricity price']['data'][
-               'commercial'] = state_price_com_proj
-    conv_state['End-use electricity price']['source'] = 'Base year data from \
-        EIA State Electricity Data website, projected to 2050 using \
-        sales-weighted average trends in residential & commercial electricity \
-        prices for EMM regions that comprise a given state.'
+    # Update data fields to store state factors
+    conv_emm['CO2 intensity of electricity']['data'] = state_co2_proj
+    conv_emm['CO2 intensity of electricity']['source'] = (
+        'Base year data from EIA State Electricity Data website, '
+        'projected to 2050 using sales-weighted average trends in '
+        'CO2 intensity for EMM regions that comprise a given state.')
+    conv_emm['End-use electricity price']['data']['residential'] = state_price_res_proj
+    conv_emm['End-use electricity price']['data']['commercial'] = state_price_com_proj
+    conv_emm['End-use electricity price']['source'] = (
+        'Base year data from EIA State Electricity Data website, '
+        'projected to 2050 using sales-weighted average trends in '
+        'residential and commercial electricity prices for EMM regions '
+        'that comprise a given state.')
 
-    return conv_state
+    return conv_emm
 
 
-if __name__ == '__main__':
+def main():
+    """ TEMP - add docstring
+    """
     # Get API key from available environment variables
     if 'EIA_API_KEY' in os.environ:
         api_key = os.environ['EIA_API_KEY']
@@ -1026,7 +947,7 @@ if __name__ == '__main__':
     #         break
 
     # TEMP - ADDED FOR DEVELOPMENT/TESTING PURPOSES
-    geography = 'National factors file'
+    geography = 'Regional factors file'
     year = '2023'
     scenario = 'REF2023'
 
@@ -1045,11 +966,19 @@ if __name__ == '__main__':
     # file or regional emission/price projections file
 
     if geography == 'National factors file':
+        # Set up command line arguments
         parser = argparse.ArgumentParser()
-        # Set up command line argument for switching to the "captured
-        # energy" method for calculating electricity site-source conversions
+        # Add argument for switching to the "captured energy" method for
+        # calculating electricity site-source conversions
         parser.add_argument('--captured', action='store_true')
+        # Add argument for creating a web app-compatible version of the
+        # site-source conversions file that outputs "other fuel" data
+        # instead of separate values for propane and distillate
+        parser.add_argument('--web', action='store_true')
+        # Get arguments
         use_captured_nrg_method = parser.parse_args().captured
+        make_web_version = parser.parse_args().web
+
         if use_captured_nrg_method:
             method_text = 'CAPTURED ENERGY'
         else:
@@ -1057,13 +986,7 @@ if __name__ == '__main__':
         print('\nATTENTION: SITE-SOURCE CONVERSIONS FOR ELECTRICITY '
               'WILL BE CALCULATED USING THE ' + method_text + ' METHOD.')
 
-        # Set up command line argument for creating web app-compatible
-        # version of site-source conversions file that outputs "other
-        # fuel" data instead of separate values for propane and distillate
-        parser.add_argument('--web', action='store_true')
-        make_web_version = parser.parse_args().web
-
-        # Set converter file name variable
+        # Set converter file name based on command line arguments
         if make_web_version:
             conv_file = 'site_source_co2_conversions_web.json'
         elif use_captured_nrg_method:
@@ -1086,7 +1009,8 @@ if __name__ == '__main__':
         conv.move_to_end('updated_to_aeo_year', last=False)
 
         # Update site-source and CO2 emissions conversions
-        conv = updater(conv, api_key, year, scenario, use_captured_nrg_method)
+        conv = updater(conv, api_key, year, scenario, use_captured_nrg_method,
+                       make_web_version)
 
         # Exclude years that are not covered in AEO metadata year range
         fuels = ['CO2 price', 'electricity', 'natural gas', 'propane',
@@ -1115,7 +1039,10 @@ if __name__ == '__main__':
                         pass
 
         # Output modified site-source and CO2 emissions conversion data
-        with open(UsefulVars().ss_conv_file_out, 'w') as js_out:
+        conv_file_out = (
+            'supporting_data/convert_data/' +
+            conv_file.split('.')[0] + '-new.json')
+        with open(conv_file_out, 'w') as js_out:
             json.dump(conv, js_out, indent=2)
 
         # Warn user that source fields need to be updated manually
@@ -1157,7 +1084,7 @@ if __name__ == '__main__':
         conv.move_to_end('updated_to_aeo_year', last=False)
 
         print('\nUpdating EMM region CO2 emissions and prices '
-              'conversion factors.\n')
+              'conversion factors.')
 
         # Update EMM region emissions and electricity price factors
         conv_emm = updater_emm(conv, api_key, year, scenario)
@@ -1167,11 +1094,15 @@ if __name__ == '__main__':
             json.dump(conv_emm, js_out, indent=5)
 
         print('\nUpdating state CO2 emissions and prices '
-              'conversion factors.\n')
+              'conversion factors.')
 
         # Update state emissions and electricity price factors
-        conv_state = updater_state(conv_emm, api_key, year, scenario)
+        conv_state = updater_state(conv_emm, aeo_min)
 
         # Output updated state emissions/price projections data
         with open(UsefulVars().state_conv_file_out, 'w') as js_out:
             json.dump(conv_state, js_out, indent=5)
+
+
+if __name__ == '__main__':
+    main()
