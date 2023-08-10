@@ -40,29 +40,38 @@ class UsefulVars(object):
     """Class of variables that are handy to have widely available.
 
     Attributes:
-        ss_conv_file (str): Relative path from main scout directory to
-            conversions JSON file.
-        ss_conv_file_out (str): Relative path from main scout directory
-            to location for writing newly updated conversions data.
-        emm_conv_file (str): Relative path from main scout directory
-            to EMM emissions/prices projections JSON file.
-        emm_conv_file_out (str): Relative path from main scout directory
-            to location for writing newly updated EMM projections data.
+        ss_conv_file (str): Relative path (from the main scout directory)
+            for the conversions JSON file.
+        ss_conv_file_ce (str): Relative path for the captured energy
+            calculation method version of the conversions JSON file.
+        ss_conv_file_web (str): Relative path for the conversions JSON
+            file formatted for use with the web app.
+        emm_conv_file (str): Relative path from the main scout directory
+            to the EMM emissions/prices projections JSON file.
+        emm_conv_file_out (str): Relative path from the main scout directory
+            to the location for writing newly updated EMM projections data.
+        emm_state_map (str): Weights for mapping from EMM regions to states.
+        state_baseline_data (str): Path to state-level baseline data.
+        state_conv_file_out (str): Path to location for writing state-
+            level conversions JSON file output.
+        metadata (str): Path to AEO data year range metadata file.
     """
 
     def __init__(self):
-        self.ss_conv_file = ('supporting_data/convert_data/' +  # TEMP - is this being used?
+        self.ss_conv_file = ('supporting_data/convert_data/'
                              'site_source_co2_conversions.json')
-        self.ss_conv_file_out = ('supporting_data/convert_data/' +  # TEMP - change to appending new to file name - I think this isn't being used anymore
-                                 'site_source_co2_conversions-new.json')
-        self.emm_conv_file = ('supporting_data/convert_data/' +
-                              'emm_region_emissions_prices.json')  # TEMP - is this still being used
-        self.emm_conv_file_out = ('supporting_data/convert_data/' +
+        self.ss_conv_file_ce = ('supporting_data/convert_data/'
+                                'site_source_co2_conversions-ce.json')
+        self.ss_conv_file_web = ('supporting_data/convert_data/'
+                                 'site_source_co2_conversions_web.json')
+        self.emm_conv_file = ('supporting_data/convert_data/'
+                              'emm_region_emissions_prices.json')
+        self.emm_conv_file_out = ('supporting_data/convert_data/'
                                   'emm_region_emissions_prices-updated.json')
-        self.emm_state_map = ('supporting_data/convert_data/geo_map/' +
+        self.emm_state_map = ('supporting_data/convert_data/geo_map/'
                               'EMM_State_ColSums.txt')
-        self.state_baseline_data = ('supporting_data/convert_data/' +
-                                    'EIA_State_Emissions_Prices_Baselines_' +
+        self.state_baseline_data = ('supporting_data/convert_data/'
+                                    'EIA_State_Emissions_Prices_Baselines_'
                                     '2020.csv')  # TEMP - WHY DOES THIS HAVE A YEAR IN IT?
         self.state_conv_file_out = ('supporting_data/convert_data/' +
                                     'state_emissions_prices-updated.json')
@@ -322,16 +331,8 @@ def data_processor(data):
     data = np.array(data)[years.argsort()]  # Re-sort in ascending year order
     years = years[years.argsort()]  # Re-sort to be in ascending year order
 
-    # Load metadata including AEO year range  # TEMP - duplicated code - repeat only once, move to new function
-    with open(UsefulVars().metadata, 'r') as aeo_yrs:
-        try:
-            aeo_yrs = json.load(aeo_yrs)
-        except ValueError as e:
-            raise ValueError(
-                "Error reading in '" +
-                UsefulVars().metadata + "': " + str(e)) from None
-    # Get minimum AEO modeling year and convert to np.datetime64
-    aeo_min = aeo_yrs["min year"]
+    # Get first year of AEO data
+    aeo_min = aeo_min_extract()
 
     # If/else loop to handle issue of conversion file not matching
     # aeo_min from metadata.json. In this case, years for each region
@@ -891,9 +892,30 @@ def updater_state(conv_emm, aeo_min):
     return conv_emm
 
 
-def main():
-    """ TEMP - add docstring
+def aeo_min_extract():
+    """Get minimum AEO data year based on AEO metadata file
+
+    Returns:
+        Year string with the format YYYY corresponding to the earliest
+        year of reported AEO data based on the metadata file.
     """
+    # Load metadata including AEO year range
+    with open(UsefulVars().metadata, 'r') as aeo_yrs:
+        try:
+            aeo_yrs = json.load(aeo_yrs)
+        except ValueError as e:
+            raise ValueError(
+                "Error reading in '" +
+                UsefulVars().metadata + "': " + str(e)) from None
+    # Get minimum AEO modeling year
+    aeo_min = aeo_yrs["min year"]
+
+    return aeo_min
+
+
+def main():
+    """Main function calls to generate updated conversion files"""
+
     # Get API key from available environment variables
     if 'EIA_API_KEY' in os.environ:
         api_key = os.environ['EIA_API_KEY']
@@ -951,16 +973,8 @@ def main():
     year = '2023'
     scenario = 'REF2023'
 
-    # Load metadata including AEO year range
-    with open(UsefulVars().metadata, 'r') as aeo_yrs:
-        try:
-            aeo_yrs = json.load(aeo_yrs)
-        except ValueError as e:
-            raise ValueError(
-                "Error reading in '" +
-                UsefulVars().metadata + "': " + str(e)) from None
-    # Get minimum AEO modeling year
-    aeo_min = (aeo_yrs["min year"])
+    # Get first year of AEO data
+    aeo_min = aeo_min_extract()
 
     # Update routine specific to whether user is updating site-to-source
     # file or regional emission/price projections file
@@ -986,16 +1000,15 @@ def main():
         print('\nATTENTION: SITE-SOURCE CONVERSIONS FOR ELECTRICITY '
               'WILL BE CALCULATED USING THE ' + method_text + ' METHOD.')
 
-        # Set converter file name based on command line arguments
+        # Load converter file based on command line arguments
         if make_web_version:
-            conv_file = 'site_source_co2_conversions_web.json'
+            conv_file = UsefulVars().ss_conv_file_web
         elif use_captured_nrg_method:
-            conv_file = 'site_source_co2_conversions-ce.json'
+            conv_file = UsefulVars().ss_conv_file_ce
         else:
-            conv_file = 'site_source_co2_conversions.json'
+            conv_file = UsefulVars().ss_conv_file
         # Load current file to be updated
-        conv = json.load(open('supporting_data/convert_data/' +
-                              conv_file, 'r'))
+        conv = json.load(open(conv_file, 'r'))
 
         # Change conversion factors dict imported from JSON to OrderedDict
         # so that the AEO year and scenario specified by the user can be
@@ -1039,9 +1052,7 @@ def main():
                         pass
 
         # Output modified site-source and CO2 emissions conversion data
-        conv_file_out = (
-            'supporting_data/convert_data/' +
-            conv_file.split('.')[0] + '-new.json')
+        conv_file_out = conv_file.split('.')[0] + '-updated.json'
         with open(conv_file_out, 'w') as js_out:
             json.dump(conv, js_out, indent=2)
 
@@ -1052,10 +1063,9 @@ def main():
 
     else:
         # Set converter file variable to EMM region file
-        conv_file = 'emm_region_emissions_prices.json'
+        conv_file = UsefulVars().emm_conv_file
         # Load file
-        conv_init = json.load(open('supporting_data/convert_data/' +
-                                   conv_file, 'r'))
+        conv_init = json.load(open(conv_file, 'r'))
 
         # Exclude years that are not covered in AEO metadata year range
         metrics = ['CO2 intensity of electricity', 'End-use electricity price']
