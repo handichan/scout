@@ -48,12 +48,10 @@ class UsefulVars(object):
             file formatted for use with the web app.
         emm_conv_file (str): Relative path from the main scout directory
             to the EMM emissions/prices projections JSON file.
-        emm_conv_file_out (str): Relative path from the main scout directory
-            to the location for writing newly updated EMM projections data.
         emm_state_map (str): Weights for mapping from EMM regions to states.
         state_baseline_data (str): Path to state-level baseline data.
-        state_conv_file_out (str): Path to location for writing state-
-            level conversions JSON file output.
+        state_conv_file (str): Path to location for writing state-level
+            conversions JSON file output.
         metadata (str): Path to AEO data year range metadata file.
     """
 
@@ -66,15 +64,13 @@ class UsefulVars(object):
                                  'site_source_co2_conversions_web.json')
         self.emm_conv_file = ('supporting_data/convert_data/'
                               'emm_region_emissions_prices.json')
-        self.emm_conv_file_out = ('supporting_data/convert_data/'
-                                  'emm_region_emissions_prices-updated.json')
         self.emm_state_map = ('supporting_data/convert_data/geo_map/'
                               'EMM_State_ColSums.txt')
         self.state_baseline_data = ('supporting_data/convert_data/'
                                     'EIA_State_Emissions_Prices_Baselines_'
                                     '2020.csv')
-        self.state_conv_file_out = ('supporting_data/convert_data/' +
-                                    'state_emissions_prices-updated.json')
+        self.state_conv_file = ('supporting_data/convert_data/' +
+                                'state_emissions_prices-updated.json')
         self.metadata = ('metadata.json')
 
 
@@ -1048,8 +1044,7 @@ def main():
                         pass
 
         # Output modified site-source and CO2 emissions conversion data
-        conv_file_out = conv_file.split('.')[0] + '-updated.json'
-        with open(conv_file_out, 'w') as js_out:
+        with open(conv_file, 'w') as js_out:
             json.dump(conv, js_out, indent=2)
 
         # Warn user that source fields need to be updated manually
@@ -1096,7 +1091,7 @@ def main():
         conv_emm = updater_emm(conv, api_key, year, scenario)
 
         # Output updated EMM emissions/price projections data
-        with open(UsefulVars().emm_conv_file_out, 'w') as js_out:
+        with open(UsefulVars().emm_conv_file, 'w') as js_out:
             json.dump(conv_emm, js_out, indent=5)
 
         print('\nUpdating state CO2 emissions and prices '
@@ -1106,7 +1101,7 @@ def main():
         conv_state = updater_state(conv_emm, aeo_min)
 
         # Output updated state emissions/price projections data
-        with open(UsefulVars().state_conv_file_out, 'w') as js_out:
+        with open(UsefulVars().state_conv_file, 'w') as js_out:
             json.dump(conv_state, js_out, indent=5)
 
 
