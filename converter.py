@@ -72,7 +72,7 @@ class UsefulVars(object):
                               'EMM_State_ColSums.txt')
         self.state_baseline_data = ('supporting_data/convert_data/'
                                     'EIA_State_Emissions_Prices_Baselines_'
-                                    '2020.csv')  # TEMP - WHY DOES THIS HAVE A YEAR IN IT?
+                                    '2020.csv')
         self.state_conv_file_out = ('supporting_data/convert_data/' +
                                     'state_emissions_prices-updated.json')
         self.metadata = ('metadata.json')
@@ -82,6 +82,10 @@ class ValidQueries(object):
     """Define valid query options for AEO data requested via the EIA data API
 
     Attributes:
+        file_type (list): A list of file types to update with this
+            module, where "national" corresponds to the site-source
+            conversions files, and "regional" corresponds to the EMM
+            and state price and emissions projections files
         years (list): A list of valid AEO report years for which this
             module has been evaluated to work.
         emm_years (list): A list of valid AEO report years for which
@@ -99,6 +103,7 @@ class ValidQueries(object):
     """
 
     def __init__(self):
+        self.file_type = ['national', 'regional']
         self.years = ['2018', '2019', '2020', '2021', '2022', '2023']
         self.emm_years = ['2020', '2021', '2022', '2023']
         self.cases = ['REF2018', 'REF2019', 'REF2020', 'REF2021', 'REF2022',
@@ -331,7 +336,7 @@ def data_processor(data):
     data = np.array(data)[years.argsort()]  # Re-sort in ascending year order
     years = years[years.argsort()]  # Re-sort to be in ascending year order
 
-    # Get first year of AEO data
+    # Get year of earliest AEO data
     aeo_min = aeo_min_extract()
 
     # If/else loop to handle issue of conversion file not matching
@@ -930,56 +935,47 @@ def main():
               "$ echo 'export EIA_API_KEY=your api key' >> ~/.zshrc\n")
         sys.exit(1)
 
-    # TEMP - COMMENTED OUT FOR DEVELOPMENT/TESTING PURPOSES
-    # # Ask the user to specify the desired update to make, whether  # TEMP - simplify this user option; it is a pain to type so much to make this selection
-    # # to the site_to_source conversions json or the EMM region
-    # # emissions/price projections json.
-    # while True:
-    #     geography = input('Please specify the desired file type to update. '
-    #                       'Valid entries are: ' +
-    #                       ', '.join(['National factors file',
-    #                                  'Regional factors file']) +
-    #                       '.\n')
-    #     if geography not in ['National factors file',
-    #                          'Regional factors file']:
-    #         print('Invalid file type entered.')
-    #     else:
-    #         break
+    # Ask the user whether an update to the ("national") site-source
+    # conversions JSON or the ("regional") EMM region and state
+    # emissions and price projections JSON is desired
+    while True:
+        geography = input('Please specify the desired file type to update. '
+                          'Valid entries are: ' +
+                          ', '.join(ValidQueries().file_type) + '.\n')
+        if geography not in ValidQueries().file_type:
+            print('Invalid file type entered.')
+        else:
+            break
 
-    # # Ask the user to specify the desired report year, informing the
-    # # user about the valid year options
-    # while True:
-    #     year = input('Please specify the desired AEO year. '
-    #                  'Valid entries are: ' +
-    #                  ', '.join(ValidQueries().years) + '.\n')
-    #     if year not in ValidQueries().years:
-    #         print('Invalid year entered.')
-    #     else:
-    #         break
+    # Ask the user to specify the desired report year, informing the
+    # user about the valid year options
+    while True:
+        year = input('Please specify the desired AEO year. '
+                     'Valid entries are: ' +
+                     ', '.join(ValidQueries().years) + '.\n')
+        if year not in ValidQueries().years:
+            print('Invalid year entered.')
+        else:
+            break
 
-    # # Ask the user to specify the desired AEO case or scenario,
-    # # informing the user about the valid scenario options
-    # while True:
-    #     scenario = input('Please specify the desired AEO scenario. '
-    #                      'Valid entries are: ' +
-    #                      ', '.join(ValidQueries().cases) + '.\n')
-    #     if scenario not in ValidQueries().cases:
-    #         print('Invalid scenario entered.')
-    #     else:
-    #         break
+    # Ask the user to specify the desired AEO case or scenario,
+    # informing the user about the valid scenario options
+    while True:
+        scenario = input('Please specify the desired AEO scenario. '
+                         'Valid entries are: ' +
+                         ', '.join(ValidQueries().cases) + '.\n')
+        if scenario not in ValidQueries().cases:
+            print('Invalid scenario entered.')
+        else:
+            break
 
-    # TEMP - ADDED FOR DEVELOPMENT/TESTING PURPOSES
-    geography = 'Regional factors file'
-    year = '2023'
-    scenario = 'REF2023'
-
-    # Get first year of AEO data
+    # Get year of earliest AEO data
     aeo_min = aeo_min_extract()
 
     # Update routine specific to whether user is updating site-to-source
     # file or regional emission/price projections file
 
-    if geography == 'National factors file':
+    if geography == 'national':
         # Set up command line arguments
         parser = argparse.ArgumentParser()
         # Add argument for switching to the "captured energy" method for
