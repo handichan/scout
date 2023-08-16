@@ -85,27 +85,27 @@ class ValidQueries(object):
         years (list): A list of valid AEO report years for which this
             module has been evaluated to work.
         emm_years (list): A list of valid AEO report years for which
-            this module has been evaluted to work for EMM-resolved data
+            this module has been evaluated to work for EMM-resolved data
             updates
-        cases (list): A list of valid AEO cases investigated with NEMS,
-            specified with the strings employed by the API.
-        emm_cases (list): A list of valid AEO cases investigated with NEMS,
-            which are available for EMM-resolved data queries and are
-            specified with the strings employed by the API.
+        cases (dict): A list of AEO cases relevant to Scout for each AEO
+            publication year, specified with the strings used by the API.
         regions_dict (dict): A dict of valid AEO regions, with keys
             denoting region abbreviations to use when querying the
             API and values denoting region abbreviations to use for
-            writing the updated json file.
+            writing the updated JSON file.
     """
 
     def __init__(self):
         self.file_type = ['national', 'regional']
         self.years = ['2018', '2019', '2020', '2021', '2022', '2023']
         self.emm_years = ['2020', '2021', '2022', '2023']
-        self.cases = ['REF2018', 'REF2019', 'REF2020', 'REF2021', 'REF2022',
-                      'REF2023', 'CO2FEE25', 'LOWOGS', 'LORENCST']
-        self.emm_cases = ['REF2020', 'REF2021', 'REF2022', 'REF2023',
-                          'LOWOGS', 'LORENCST']
+        self.cases = {
+            '2018': ['ref2018', 'co2fee25'],
+            '2019': ['ref2019'],
+            '2020': ['ref2020', 'co2fee25', 'lowogs', 'lorencst'],
+            '2021': ['ref2021', 'lowogs', 'lorencst'],
+            '2022': ['ref2022', 'lowogs', 'lorencst'],
+            '2023': ['ref2023', 'lowZTC']}
         self.regions_dict = OrderedDict({'WECCB': 'BASN',
                                          'WECCCAN': 'CANO',
                                          'WECCCAS': 'CASO',
@@ -259,7 +259,7 @@ class EIAQueries(object):
                 qstr = (
                     'https://api.eia.gov/v2/aeo/' + yr +
                     '/data/?frequency=annual&data[0]=value&facets[scenario][]=' +
-                    scen.lower() + '&facets[seriesId][]=' + series_id +
+                    scen + '&facets[seriesId][]=' + series_id +
                     '&facets[seriesId][]=' + series_id +
                     '&sort[0][column]=period&sort[0][direction]=desc&offset=0' +
                     '&length=5000')
@@ -267,7 +267,7 @@ class EIAQueries(object):
                 qstr = (
                     'https://api.eia.gov/v2/aeo/' + yr +
                     '/data/?frequency=annual&data[0]=value&facets[scenario][]=' +
-                    scen.lower() + '&facets[seriesId][]=' + series_id +
+                    scen + '&facets[seriesId][]=' + series_id +
                     '&sort[0][column]=period&sort[0][direction]=desc&offset=0' +
                     '&length=5000')
             self.query.append(qstr)
@@ -276,7 +276,7 @@ class EIAQueries(object):
             self.query_emm.append(
                 'https://api.eia.gov/v2/aeo/' + yr +
                 '/data/?frequency=annual&data[0]=value&facets[scenario][]=' +
-                scen.lower() + '&facets[seriesId][]=' + series_id +
+                scen + '&facets[seriesId][]=' + series_id +
                 '&sort[0][column]=period&sort[0][direction]=desc&offset=0' +
                 '&length=5000')
 
@@ -959,8 +959,8 @@ def main():
     while True:
         scenario = input('Please specify the desired AEO scenario. '
                          'Valid entries are: ' +
-                         ', '.join(ValidQueries().cases) + '.\n')
-        if scenario not in ValidQueries().cases:
+                         ', '.join(ValidQueries().cases[year]) + '.\n')
+        if scenario not in ValidQueries().cases[year]:
             print('Invalid scenario entered.')
         else:
             break
@@ -968,9 +968,17 @@ def main():
     # Get year of earliest AEO data
     aeo_min = aeo_min_extract()
 
+    # TEMP
+    # how do we specify the file?
+    # if "updated_to_cambium_case" is present
+    # print warning to console
+    # don't update some parts of the file
+        # 
+    # don't generate state level output file
+    # otherwise proceed as normal?
+
     # Update routine specific to whether user is updating site-to-source
     # file or regional emission/price projections file
-
     if geography == 'national':
         # Set up command line arguments
         parser = argparse.ArgumentParser()
@@ -1053,6 +1061,7 @@ def main():
               'BY THIS FUNCTION. PLEASE UPDATE THOSE FIELDS MANUALLY.\n')
 
     else:
+        # TEMP - raise exception if year not in emm_years
         # Set converter file variable to EMM region file
         conv_file = UsefulVars().emm_conv_file
         # Load file
