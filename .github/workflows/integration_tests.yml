@@ -55,10 +55,15 @@ jobs:
           pip install numpy>=1.16 pandas>=2.2 scipy requests numpy-financial matplotlib xlsxwriter psrecord     
       - name: Run and profile workflow
         run: |
-          psrecord --log memory_log.txt --include-children --interval 1 "python tests/integration_testing/run_workflow.py"
-          (echo -e; echo "# Elapsed time,CPU (%),Peak Real (MB),Peak Virtual (MB)"; grep -v "time" memory_log.txt | sort -k3 -n -r | head -n 1 | column -t | tr -s '[:blank:]' ',') >> tests/integration_testing/results/profile_ecm_prep.csv
+          branch_name="${{ github.head_ref }}"
+          if [[ $branch_name == 'refs/heads/master' ]]; then
+            psrecord --log memory_log.txt --include-children --interval 1 "python tests/integration_testing/run_workflow.py"
+            (echo -e; echo "# Elapsed time,CPU (%),Peak Real (MB),Peak Virtual (MB)"; grep -v "time" memory_log.txt | sort -k3 -n -r | head -n 1 | column -t | tr -s '[:blank:]' ',') >> tests/integration_testing/results/profile_ecm_prep.csv
+            mv memory_log.txt ./tests/integration_testing/results/
+          else
+            python tests/integration_testing/run_workflow.py
+          fi
           mv ./results/*.json ./tests/integration_testing/results/
-          mv memory_log.txt ./tests/integration_testing/results/
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
@@ -71,7 +76,7 @@ jobs:
           git config --system user.email "github-action@users.noreply.github.com"
           git config --system user.name "GitHub Action"
 
-          if [[ $branch_name == 'refs/heads/profiler' ]]; then
+          if [[ $branch_name == 'refs/heads/master' ]]; then
             git add ./tests/integration_testing/results/*.csv
           fi
           git add ./tests/integration_testing/results/*.json
