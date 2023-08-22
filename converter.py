@@ -57,7 +57,7 @@ class UsefulVars(object):
 
     def __init__(self):
         self.ss_conv_file = ('supporting_data/convert_data/'
-                             'site_source_co2_conversions.json')
+                             'site_source_co2_conversions.json')  # TEMP - check all these file names for whether they are still needed
         self.ss_conv_file_ce = ('supporting_data/convert_data/'
                                 'site_source_co2_conversions-ce.json')
         self.ss_conv_file_web = ('supporting_data/convert_data/'
@@ -408,16 +408,15 @@ def data_getter(api_key, series_names, api_urls):
     return mstr_data_dict, years
 
 
-def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web):
+def updater(conv, api_key, aeo_yr, scen, restrict, web):
     """Perform calculations using EIA data to update conversion factors JSON
 
     Using data from the AEO year and specified NEMS modeling scenario,
     calculate revised site-source conversion factors, CO2 emissions
     rates, and energy prices.
 
-    In the case of the "other" fuel types,
-    energy prices are based on a energy use by fuel type-weighted
-    average.
+    In the case of the "other" fuel types, energy prices are based on
+    an energy use by fuel type-weighted average.
 
     For each of the calculations performed, in case of data missing from
     the record dict 'z' not obtained from the API due to invalid series
@@ -431,11 +430,9 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web):
         aeo_yr (str): The desired year of the Annual Energy Outlook
             to query for data.
         scen (str): The desired AEO "case" or scenario to query.
-        captured_energy_method (bool): If true, use the captured
-            energy method to calculate the site-source conversions
-            for electricity. For details, refer to the DOE report
-            "Accounting Methodology for Source Energy of
-            Non-Combustible Renewable Electricity Generation"
+        restrict (bool): If true, electricity CO2 emissions intensities
+            in the file are from Cambium and should not be updated with
+            EIA data.
         web (bool): If true, the data output should include "other
             fuel" instead of separate "distillate" and "propane" fields.
 
@@ -452,7 +449,7 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web):
     # this approach is derived from the DOE report "Accounting
     # Methodology for Source Energy of Non-Combustible Renewable
     # Electricity Generation"
-    if captured_energy_method:
+    if conv['site-source calculation method'] == 'captured energy':
         renew_factor = ((z['elec_renew_hydro'] + z['elec_renew_geothermal'] +
                          z['elec_renew_wind'] + z['elec_renew_solar_thermal'] +
                          z['elec_renew_solar_pv']) /
@@ -477,27 +474,30 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web):
         print('\nDue to failed data retrieval from the API, electricity '
               'site-source conversion factors were not updated.')
 
-    # Residential electricity CO2 intensities [Mt CO2/quads]
-    try:
-        co2_res_ints = (z['elec_res_co2'] /
-                        (z['elec_res_energy_site']+z['elec_res_energy_loss']))
-        for idx, year in enumerate(yrs):
-            conv['electricity']['CO2 intensity']['data']['residential'][
-                 year] = (round(co2_res_ints[idx]/capnrg[idx], 6))
-    except KeyError:
-        print('\nDue to failed data retrieval from the API, residential '
-              'electricity CO2 emissions intensities were not updated.')
+    # Only update electricity CO2 intensities if they are from EIA
+    # data, not Cambium data
+    if not restrict:
+        # Residential electricity CO2 intensities [Mt CO2/quads]
+        try:
+            co2_res_ints = (z['elec_res_co2'] /
+                            (z['elec_res_energy_site']+z['elec_res_energy_loss']))
+            for idx, year in enumerate(yrs):
+                conv['electricity']['CO2 intensity']['data']['residential'][
+                     year] = (round(co2_res_ints[idx]/capnrg[idx], 6))
+        except KeyError:
+            print('\nDue to failed data retrieval from the API, residential '
+                  'electricity CO2 emissions intensities were not updated.')
 
-    # Commercial electricity CO2 intensities [Mt CO2/quads]
-    try:
-        co2_com_ints = (z['elec_com_co2'] /
-                        (z['elec_com_energy_site']+z['elec_com_energy_loss']))
-        for idx, year in enumerate(yrs):
-            conv['electricity']['CO2 intensity']['data']['commercial'][
-                 year] = (round(co2_com_ints[idx]/capnrg[idx], 6))
-    except KeyError:
-        print('\nDue to failed data retrieval from the API, commercial '
-              'electricity CO2 emissions intensities were not updated.')
+        # Commercial electricity CO2 intensities [Mt CO2/quads]
+        try:
+            co2_com_ints = (z['elec_com_co2'] /
+                            (z['elec_com_energy_site']+z['elec_com_energy_loss']))
+            for idx, year in enumerate(yrs):
+                conv['electricity']['CO2 intensity']['data']['commercial'][
+                     year] = (round(co2_com_ints[idx]/capnrg[idx], 6))
+        except KeyError:
+            print('\nDue to failed data retrieval from the API, commercial '
+                  'electricity CO2 emissions intensities were not updated.')
 
     # Residential natural gas CO2 intensities [Mt CO2/quads]
     try:
@@ -692,7 +692,7 @@ def updater(conv, api_key, aeo_yr, scen, captured_energy_method, web):
     return conv
 
 
-def updater_emm(conv, api_key, aeo_yr, scen):
+def updater_emm(conv, api_key, aeo_yr, scen, restrict):
     """Perform calculations using EIA data to update EMM conversion factors
     JSON.
 
@@ -710,6 +710,9 @@ def updater_emm(conv, api_key, aeo_yr, scen):
         aeo_yr (str): The desired year of the Annual Energy Outlook
             to query for data.
         scen (str): The desired AEO "case" or scenario to query.
+        restrict (bool): If true, electricity CO2 emissions intensities
+            in the file are from Cambium and should not be updated with
+            EIA data.
 
     Returns:
         Updated EMM conversion factors dict to be exported to the
@@ -726,23 +729,25 @@ def updater_emm(conv, api_key, aeo_yr, scen):
     for key, value in ValidQueries().regions_dict.items():
 
         # Electricity CO2 intensities [Mt CO2/MWh]
-        try:
-            co2_ints = ((z['elec_co2_total_' + key] * conv_factor) /
-                        # account for T&D losses by multiplying sales by 5%
-                        (z['elec_sales_total_' + key] * 1.05))
-            for idx, year in enumerate(yrs):
-                conv['CO2 intensity of electricity']['data'][value][year] = (
-                    round(co2_ints[idx], 6))
-            # Ensure years are ordered chronologically
-            conv['CO2 intensity of electricity']['data'][value] = (
-                OrderedDict(sorted(conv['CO2 intensity of electricity'][
-                    'data'][value].items())))
+        # Update only if the CO2 intensities are based on EIA data, not Cambium
+        if not restrict:
+            try:
+                co2_ints = ((z['elec_co2_total_' + key] * conv_factor) /
+                            # account for T&D losses by multiplying sales by 5%
+                            (z['elec_sales_total_' + key] * 1.05))
+                for idx, year in enumerate(yrs):
+                    conv['CO2 intensity of electricity']['data'][value][year] = (
+                        round(co2_ints[idx], 6))
+                # Ensure years are ordered chronologically
+                conv['CO2 intensity of electricity']['data'][value] = (
+                    OrderedDict(sorted(conv['CO2 intensity of electricity'][
+                        'data'][value].items())))
 
-        except KeyError:
-            print('\nDue to failed data retrieval from the API, '
-                  'electricity CO2 emissions intensities were not updated.')
+            except KeyError:
+                print('\nDue to failed data retrieval from the API, '
+                      'electricity CO2 emissions intensities were not updated.')
 
-    # Residential electricity prices [$/kWh site]
+        # Residential electricity prices [$/kWh site]
         try:
             for idx, year in enumerate(yrs):
                 conv['End-use electricity price']['data']['residential'][
@@ -757,7 +762,7 @@ def updater_emm(conv, api_key, aeo_yr, scen):
             print('\nDue to failed data retrieval from the API, residential '
                   'electricity prices were not updated.')
 
-    # Commercial electricity prices [$/kWh site]
+        # Commercial electricity prices [$/kWh site]
         try:
             for idx, year in enumerate(yrs):
                 conv['End-use electricity price']['data']['commercial'][value][
@@ -931,84 +936,84 @@ def main():
               "$ echo 'export EIA_API_KEY=your api key' >> ~/.zshrc\n")
         sys.exit(1)
 
-    # Ask the user whether an update to the ("national") site-source
-    # conversions JSON or the ("regional") EMM region and state
-    # emissions and price projections JSON is desired
-    while True:
-        geography = input('Please specify the desired file type to update. '
-                          'Valid entries are: ' +
-                          ', '.join(ValidQueries().file_type) + '.\n')
-        if geography not in ValidQueries().file_type:
-            print('Invalid file type entered.')
-        else:
-            break
+    # Add arguments for the name of the file to be updated and the AEO
+    # year and scenario to use for the update
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-f', required=True,
+                        help="Name of file to be updated, without the path.")
+    parser.add_argument('-y',
+                        help="Desired AEO publication year")
+    parser.add_argument('-s',
+                        help="Desired AEO scenario in given year")
+    opts = parser.parse_args()
 
-    # Ask the user to specify the desired report year, informing the
-    # user about the valid year options
-    while True:
-        year = input('Please specify the desired AEO year. '
-                     'Valid entries are: ' +
-                     ', '.join(ValidQueries().years) + '.\n')
-        if year not in ValidQueries().years:
-            print('Invalid year entered.')
-        else:
-            break
+    # Determine what file type is being updated based on the file name;
+    # only allow users to specify the emm_region_* and site_source_co2_*
+    # files, with the state emissions factors updated automatically
+    if opts.f.startswith('emm'):
+        geography = 'regional'
+    elif opts.f.startswith('site_source'):
+        geography = 'national'
+    else:
+        print('The file name provided does not correspond to an expected conversion file.')
 
-    # Ask the user to specify the desired AEO case or scenario,
-    # informing the user about the valid scenario options
-    while True:
-        scenario = input('Please specify the desired AEO scenario. '
+    # If not provided as a command-line argument, ask the user to
+    # specify the desired report year, informing the user about
+    # the valid year options
+    try:
+        year = opts.y
+    except AttributeError:  # Year not provided as command line argument
+        while True:
+            year = input('Please specify the desired AEO year. '
                          'Valid entries are: ' +
-                         ', '.join(ValidQueries().cases[year]) + '.\n')
-        if scenario not in ValidQueries().cases[year]:
-            print('Invalid scenario entered.')
-        else:
-            break
+                         ', '.join(ValidQueries().years) + '.\n')
+            if year not in ValidQueries().years:
+                print('Invalid year entered.')
+            else:
+                break
+
+    # If not provided as a command-line argument, ask the user to
+    # specify the desired AEO case or scenario, informing the user
+    # about the valid scenario options
+    try:
+        scenario = opts.s
+    except AttributeError:  # Scenario not provided as command line argument
+        while True:
+            scenario = input('Please specify the desired AEO scenario. '
+                             'Valid entries are: ' +
+                             ', '.join(ValidQueries().cases[year]) + '.\n')
+            if scenario not in ValidQueries().cases[year]:
+                print('Invalid scenario entered.')
+            else:
+                break
 
     # Get year of earliest AEO data
     aeo_min = aeo_min_extract()
 
-    # TEMP
-    # how do we specify the file?
-    # if "updated_to_cambium_case" is present
-    # print warning to console
-    # don't update some parts of the file
-        # 
-    # don't generate state level output file
-    # otherwise proceed as normal?
+    # Import file contents
+    conv = json.load(open(opts.f, 'r'))
+
+    # Set calculation method
+    method_text = conv['site-source calculation method']
+
+    # Determine if the conversion file has been updated using Cambium data
+    try:
+        _ = conv['updated_to_cambium_year']
+        restrict_update = True
+    except KeyError:
+        restrict_update = False
 
     # Update routine specific to whether user is updating site-to-source
     # file or regional emission/price projections file
     if geography == 'national':
-        # Set up command line arguments
-        parser = argparse.ArgumentParser()
-        # Add argument for switching to the "captured energy" method for
-        # calculating electricity site-source conversions
-        parser.add_argument('--captured', action='store_true')
-        # Add argument for creating a web app-compatible version of the
-        # site-source conversions file that outputs "other fuel" data
-        # instead of separate values for propane and distillate
-        parser.add_argument('--web', action='store_true')
-        # Get arguments
-        use_captured_nrg_method = parser.parse_args().captured
-        make_web_version = parser.parse_args().web
 
-        if use_captured_nrg_method:
-            method_text = 'CAPTURED ENERGY'
-        else:
-            method_text = 'FOSSIL FUEL EQUIVALENCE'
         print('\nATTENTION: SITE-SOURCE CONVERSIONS FOR ELECTRICITY '
-              'WILL BE CALCULATED USING THE ' + method_text + ' METHOD.')
+              'WILL BE CALCULATED USING THE ' + method_text.upper() + ' METHOD.')
 
-        # Load converter file based on command line arguments
-        if make_web_version:
-            conv_file = UsefulVars().ss_conv_file_web
-        elif use_captured_nrg_method:
-            conv_file = UsefulVars().ss_conv_file_ce
+        if opts.f.endswith('web.json'):
+            make_web_version = True
         else:
-            conv_file = UsefulVars().ss_conv_file
-        # Load current file to be updated
-        conv = json.load(open(conv_file, 'r'))
+            make_web_version = False
 
         # Change conversion factors dict imported from JSON to OrderedDict
         # so that the AEO year and scenario specified by the user can be
@@ -1016,14 +1021,11 @@ def main():
         conv = OrderedDict(conv)
         conv['updated_to_aeo_year'] = year
         conv['updated_to_aeo_case'] = scenario
-        conv['site-source calculation method'] = method_text.lower()
-        conv.move_to_end('site-source calculation method', last=False)
         conv.move_to_end('updated_to_aeo_case', last=False)
         conv.move_to_end('updated_to_aeo_year', last=False)
 
         # Update site-source and CO2 emissions conversions
-        conv = updater(conv, api_key, year, scenario, use_captured_nrg_method,
-                       make_web_version)
+        conv = updater(conv, api_key, year, scenario, restrict_update, make_web_version)
 
         # Exclude years that are not covered in AEO metadata year range
         fuels = ['CO2 price', 'electricity', 'natural gas', 'propane',
@@ -1052,7 +1054,7 @@ def main():
                         pass
 
         # Output modified site-source and CO2 emissions conversion data
-        with open(conv_file, 'w') as js_out:
+        with open(conv_file, 'w') as js_out:  # TEMP - fix file name output
             json.dump(conv, js_out, indent=2)
 
         # Warn user that source fields need to be updated manually
@@ -1062,32 +1064,28 @@ def main():
 
     else:
         # TEMP - raise exception if year not in emm_years
-        # Set converter file variable to EMM region file
-        conv_file = UsefulVars().emm_conv_file
-        # Load file
-        conv_init = json.load(open(conv_file, 'r'))
 
         # Exclude years that are not covered in AEO metadata year range
         metrics = ['CO2 intensity of electricity', 'End-use electricity price']
         bldgs = ['residential', 'commercial']
         for bldg in bldgs:
-            for reg in list(conv_init[metrics[0]]['data'].keys()):
+            for reg in list(conv[metrics[0]]['data'].keys()):
                 try:
-                    for year_remove in list(conv_init[metrics[0]]['data'][
+                    for year_remove in list(conv[metrics[0]]['data'][
                                     reg].keys()):
                         if int(year_remove) < aeo_min:
-                            conv_init[metrics[0]]['data'][reg].pop(year_remove)
+                            conv[metrics[0]]['data'][reg].pop(year_remove)
                 except KeyError:
-                    for year_remove in list(conv_init[metrics[1]]['data'][
+                    for year_remove in list(conv[metrics[1]]['data'][
                                      bldg][reg].keys()):
                         if int(year_remove) < aeo_min:
-                            conv_init[metrics[1]]['data'][
+                            conv[metrics[1]]['data'][
                                                   bldg][reg].pop(year_remove)
 
         # Change conversion factors dict imported from JSON to OrderedDict
         # so that the AEO year and scenario specified by the user can be
         # added with the indicated keys to the beginning of the file
-        conv = OrderedDict(conv_init)
+        conv = OrderedDict(conv)
         conv['updated_to_aeo_year'] = year
         conv['updated_to_aeo_case'] = scenario
         conv.move_to_end('updated_to_aeo_case', last=False)
@@ -1097,21 +1095,24 @@ def main():
               'conversion factors.')
 
         # Update EMM region emissions and electricity price factors
-        conv_emm = updater_emm(conv, api_key, year, scenario)
+        conv_emm = updater_emm(conv, api_key, year, scenario, restrict_update)
 
         # Output updated EMM emissions/price projections data
-        with open(UsefulVars().emm_conv_file, 'w') as js_out:
+        with open(UsefulVars().emm_conv_file, 'w') as js_out:  # TEMP - fix file name output
             json.dump(conv_emm, js_out, indent=5)
 
-        print('\nUpdating state CO2 emissions and prices '
-              'conversion factors.')
+        # Only update the state file if the EMM file imported does not
+        # include content updated using Cambium data
+        if not restrict_update:
+            print('\nUpdating state CO2 emissions and prices '
+                  'conversion factors.')
 
-        # Update state emissions and electricity price factors
-        conv_state = updater_state(conv_emm, aeo_min)
+            # Update state emissions and electricity price factors
+            conv_state = updater_state(conv_emm, aeo_min)
 
-        # Output updated state emissions/price projections data
-        with open(UsefulVars().state_conv_file, 'w') as js_out:
-            json.dump(conv_state, js_out, indent=5)
+            # Output updated state emissions/price projections data
+            with open(UsefulVars().state_conv_file, 'w') as js_out:  # TEMP - fix file name output
+                json.dump(conv_state, js_out, indent=5)
 
 
 if __name__ == '__main__':
