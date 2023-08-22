@@ -40,14 +40,6 @@ class UsefulVars(object):
     """Class of variables that are handy to have widely available.
 
     Attributes:
-        ss_conv_file (str): Relative path (from the main scout directory)
-            for the conversions JSON file.
-        ss_conv_file_ce (str): Relative path for the captured energy
-            calculation method version of the conversions JSON file.
-        ss_conv_file_web (str): Relative path for the conversions JSON
-            file formatted for use with the web app.
-        emm_conv_file (str): Relative path from the main scout directory
-            to the EMM emissions/prices projections JSON file.
         emm_state_map (str): Weights for mapping from EMM regions to states.
         state_baseline_data (str): Path to state-level baseline data.
         state_conv_file (str): Path to location for writing state-level
@@ -56,14 +48,6 @@ class UsefulVars(object):
     """
 
     def __init__(self):
-        self.ss_conv_file = ('supporting_data/convert_data/'
-                             'site_source_co2_conversions.json')  # TEMP - check all these file names for whether they are still needed
-        self.ss_conv_file_ce = ('supporting_data/convert_data/'
-                                'site_source_co2_conversions-ce.json')
-        self.ss_conv_file_web = ('supporting_data/convert_data/'
-                                 'site_source_co2_conversions_web.json')
-        self.emm_conv_file = ('supporting_data/convert_data/'
-                              'emm_region_emissions_prices.json')
         self.emm_state_map = ('supporting_data/convert_data/geo_map/'
                               'EMM_State_ColSums.txt')
         self.state_baseline_data = ('supporting_data/convert_data/'
@@ -991,7 +975,7 @@ def main():
     aeo_min = aeo_min_extract()
 
     # Import file contents
-    conv = json.load(open(opts.f, 'r'))
+    conv = json.load(open('supporting_data/convert_data/' + opts.f, 'r'))
 
     # Set calculation method
     method_text = conv['site-source calculation method']
@@ -1054,7 +1038,7 @@ def main():
                         pass
 
         # Output modified site-source and CO2 emissions conversion data
-        with open(conv_file, 'w') as js_out:  # TEMP - fix file name output
+        with open('supporting_data/convert_data/' + opts.f, 'w') as js_out:
             json.dump(conv, js_out, indent=2)
 
         # Warn user that source fields need to be updated manually
@@ -1063,7 +1047,10 @@ def main():
               'BY THIS FUNCTION. PLEASE UPDATE THOSE FIELDS MANUALLY.\n')
 
     else:
-        # TEMP - raise exception if year not in emm_years
+        # If the year is not in emm_years, stop execution because the
+        # EMM data will not have the expected 25 EMM regions
+        if year not in VaidQueries().emm_years:
+            raise ValueError('Year specified does not match valid EMM years')
 
         # Exclude years that are not covered in AEO metadata year range
         metrics = ['CO2 intensity of electricity', 'End-use electricity price']
@@ -1098,7 +1085,7 @@ def main():
         conv_emm = updater_emm(conv, api_key, year, scenario, restrict_update)
 
         # Output updated EMM emissions/price projections data
-        with open(UsefulVars().emm_conv_file, 'w') as js_out:  # TEMP - fix file name output
+        with open('supporting_data/convert_data/' + opts.f, 'w') as js_out:
             json.dump(conv_emm, js_out, indent=5)
 
         # Only update the state file if the EMM file imported does not
@@ -1111,7 +1098,7 @@ def main():
             conv_state = updater_state(conv_emm, aeo_min)
 
             # Output updated state emissions/price projections data
-            with open(UsefulVars().state_conv_file, 'w') as js_out:  # TEMP - fix file name output
+            with open(UsefulVars().state_conv_file, 'w') as js_out:
                 json.dump(conv_state, js_out, indent=5)
 
 
