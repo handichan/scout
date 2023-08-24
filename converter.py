@@ -54,7 +54,7 @@ class UsefulVars(object):
                                     'EIA_State_Emissions_Prices_Baselines_'
                                     '2020.csv')
         self.state_conv_file = ('supporting_data/convert_data/' +
-                                'state_emissions_prices-updated.json')
+                                'state_emissions_prices.json')
         self.metadata = ('metadata.json')
 
 
@@ -89,7 +89,7 @@ class ValidQueries(object):
             '2020': ['ref2020', 'co2fee25', 'lowogs', 'lorencst'],
             '2021': ['ref2021', 'lowogs', 'lorencst'],
             '2022': ['ref2022', 'lowogs', 'lorencst'],
-            '2023': ['ref2023', 'lowZTC']}
+            '2023': ['ref2023', 'lowogs', 'lowZTC', 'lowmaclowZTC']}
         self.regions_dict = OrderedDict({'WECCB': 'BASN',
                                          'WECCCAN': 'CANO',
                                          'WECCCAS': 'CASO',
@@ -126,11 +126,17 @@ class EIAQueries(object):
             specified by the user.
         data_names (list): A list of strings to use as keys for the
             data pulled from the AEO and added to a dict.
+        data_table_ids (list): A list of the expected data tableId
+            values corresponding to the tables for the requested data
+            series from the EIA API.
         data_series_emm (list): API key strings to obtain the desired
             data by EMM region from the EIA AEO for the scenario and
             AEO release year specified by the user.
         data_names_emm (list): A list of strings to use as keys for
             the EMM data pulled from the AEO and added to a dict.
+        data_table_ids_emm (list): A list of the expected data tableId
+            values corresponding to the tables for the requested data
+            series from the EIA API.
         nonstandard_query_reqd (list): A list of API series IDs whose
             API paths do not follow the same format as other data.
         query (list): Complete API path (URL) constructed for the
@@ -218,6 +224,18 @@ class EIAQueries(object):
             'distl_com_energy',
             'rsid_com_energy']
 
+        self.data_table_ids = [
+            24, 24, 24, 24, 24,  # Table 17. Renewable Energy Consumption by Sector and Source
+            2, 2, 2, 2, 2, 2,  # Table 2. Energy Consumption by Sector and Source
+            17, 17,  # Table 18. Energy-Related Carbon Dioxide Emissions by Sector and Source
+            3, 3,  # Table 3. Energy Prices by Sector and Source
+            2, 2,
+            17, 17,
+            3, 3,
+            2, 17, 2, 17, 2, 17,
+            3, 3, 2, 2,
+            3, 3, 3, 2, 2, 2]
+
         self.data_series_emm = []
         self.data_names_emm = []
 
@@ -232,6 +250,9 @@ class EIAQueries(object):
                 'elec_sales_total_' + reg,
                 'elec_enduse_price_res_' + reg,
                 'elec_enduse_price_com_' + reg])
+
+        self.data_table_ids_emm = [62] * len(self.data_series_emm)
+        # Table 54. Electric Power Projections by Electricity Market Module Region
 
         self.query = []
         self.query_emm = []
@@ -268,7 +289,7 @@ class EIAQueries(object):
 # https://stackoverflow.com/questions/22786068/
 # how-to-avoid-http-error-429-too-many-requests-python
 @on_exception(expo, Exception, max_tries=5)
-def api_query(api_key, query_str):
+def api_query(api_key, query_str, expect_table_id):
     """Execute an EIA API query and extract the data returned
 
     Execute a query of the EIA API and extract the data from the
@@ -278,6 +299,8 @@ def api_query(api_key, query_str):
         api_key (str): EIA API key.
         query_str (str): EIA API URL for a specific data series,
             excluding the user-specific API key.
+        expect_table_id (int): The tableId in the EIA API from which
+            the current query data are expected to be drawn.
 
     Returns:
         A nested list of data with inner lists structured as
@@ -288,7 +311,7 @@ def api_query(api_key, query_str):
     try:
         data = response.json()['response']['data']
         # Extract only the required data in the API response
-        data = [[str(x['period']), x['value']] for x in data]
+        data = [[str(x['period']), x['value']] for x in data if x['tableId'] == expect_table_id]
     except KeyError:
         if response.status_code == 429:  # API rate limit exceeded
             raise Exception('Rate limit reached')
@@ -354,7 +377,7 @@ def data_processor(data):
     return data, years
 
 
-def data_getter(api_key, series_names, api_urls):
+def data_getter(api_key, series_names, api_urls, series_table):
     """Get data from EIA using their data API and store in dict
 
     Call the required functions to obtain data from EIA using their
@@ -367,6 +390,8 @@ def data_getter(api_key, series_names, api_urls):
             to use for the data in the dict.
         api_urls (list): List of paths (URLs) to obtain the desired
             data from the EIA API.
+        series_table (list): The data tableId values corresponding to
+            the expected tables for the series_names.
 
     Returns:
         Dict with keys specified in series_names for which the
@@ -381,7 +406,7 @@ def data_getter(api_key, series_names, api_urls):
         # output should be ignored entirely; the resulting error
         # from the missing key in the master dict will be handled
         # in the updater function
-        raw_data = api_query(api_key, series)
+        raw_data = api_query(api_key, series, series_table[idx])
         if isinstance(raw_data, (list,)):
             # Restructure the data obtained from the API
             data, years = data_processor(raw_data)
@@ -426,7 +451,7 @@ def updater(conv, api_key, aeo_yr, scen, restrict, web):
 
     # Get data via EIA API
     dq = EIAQueries(aeo_yr, scen)
-    z, yrs = data_getter(api_key, dq.data_names, dq.query)
+    z, yrs = data_getter(api_key, dq.data_names, dq.query, dq.data_table_ids)
 
     # Calculate adjustment factor to use the captured energy method
     # to account for electric source energy from renewable generation;
@@ -705,7 +730,7 @@ def updater_emm(conv, api_key, aeo_yr, scen, restrict):
 
     # Get data via EIA API
     dq = EIAQueries(aeo_yr, scen)
-    z, yrs = data_getter(api_key, dq.data_names_emm, dq.query_emm)
+    z, yrs = data_getter(api_key, dq.data_names_emm, dq.query_emm, dq.data_table_ids_emm)
 
     # Emissions conversion factor from short tons to metric tons
     conv_factor = 0.90718474
@@ -776,7 +801,7 @@ def updater_state(conv_emm, aeo_min):
     Args:
         conv_emm (dict): Data structure from conversion JSON data file
             populated with EMM region-structured conversion values.
-        aeo_min (int): Minimum (earliest) AEO data output year
+        aeo_min (str): Minimum (earliest) AEO data output year
 
     Returns:
         State-level conversion factors dict to be exported to JSON.
@@ -977,9 +1002,6 @@ def main():
     # Import file contents
     conv = json.load(open('supporting_data/convert_data/' + opts.f, 'r'))
 
-    # Set calculation method
-    method_text = conv['site-source calculation method']
-
     # Determine if the conversion file has been updated using Cambium data
     try:
         _ = conv['updated_to_cambium_year']
@@ -990,6 +1012,8 @@ def main():
     # Update routine specific to whether user is updating site-to-source
     # file or regional emission/price projections file
     if geography == 'national':
+        # Set calculation method
+        method_text = conv['site-source calculation method']
 
         print('\nATTENTION: SITE-SOURCE CONVERSIONS FOR ELECTRICITY '
               'WILL BE CALCULATED USING THE ' + method_text.upper() + ' METHOD.')
@@ -1049,7 +1073,7 @@ def main():
     else:
         # If the year is not in emm_years, stop execution because the
         # EMM data will not have the expected 25 EMM regions
-        if year not in VaidQueries().emm_years:
+        if year not in ValidQueries().emm_years:
             raise ValueError('Year specified does not match valid EMM years')
 
         # Exclude years that are not covered in AEO metadata year range
@@ -1095,7 +1119,7 @@ def main():
                   'conversion factors.')
 
             # Update state emissions and electricity price factors
-            conv_state = updater_state(conv_emm, aeo_min)
+            conv_state = updater_state(conv_emm, str(aeo_min))
 
             # Output updated state emissions/price projections data
             with open(UsefulVars().state_conv_file, 'w') as js_out:
