@@ -43,12 +43,12 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      # - name: temporarily reduce number of ecms
-      #   run: |
-      #     cd ecm_definitions/
-      #     shopt -s extglob
-      #     rm !(Best Com. Air Sealing (Exist).json|Best Com. Air Sealing (New).json|energyplus_data|Res. Air Sealing (Exist), IECC c. 2021.json|Res. Air Sealing (New), IECC c. 2021.json)
-      #     echo [] > package_ecms.json 
+      - name: temporarily reduce number of ecms
+        run: |
+          cd ecm_definitions/
+          shopt -s extglob
+          rm !(Best Com. Air Sealing (Exist).json|Best Com. Air Sealing (New).json|energyplus_data|Res. Air Sealing (Exist), IECC c. 2021.json|Res. Air Sealing (New), IECC c. 2021.json)
+          echo [] > package_ecms.json 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -56,10 +56,13 @@ jobs:
       - name: Run and profile workflow
         run: |
           branch_name="${{ github.head_ref }}"
-          if [[ $branch_name == 'refs/heads/master' ]]; then
-            psrecord --log memory_log.txt --include-children --interval 1 "python tests/integration_testing/run_workflow.py"
-            (echo -e; echo "# Elapsed time,CPU (%),Peak Real (MB),Peak Virtual (MB)"; grep -v "time" memory_log.txt | sort -k3 -n -r | head -n 1 | column -t | tr -s '[:blank:]' ',') >> tests/integration_testing/results/profile_ecm_prep.csv
-            mv memory_log.txt ./tests/integration_testing/results/
+          if [[ $branch_name == 'refs/heads/profiler' ]]; then
+            steps=("ecm_prep" "run")
+            for step in "${steps[@]}"; do
+              psrecord --log memory_log_${step}.txt --include-children --interval 1 "python tests/integration_testing/run_workflow.py --run_step $step"
+              (echo -e; echo "# Elapsed time,CPU (%),Peak Real (MB),Peak Virtual (MB)"; grep -v "time" memory_log_${step}.txt | sort -k3 -n -r | head -n 1 | column -t | tr -s '[:blank:]' ',') >> tests/integration_testing/results/profile_${step}.csv
+              mv memory_log_${step}.txt ./tests/integration_testing/results/
+            done
           else
             python tests/integration_testing/run_workflow.py
           fi
