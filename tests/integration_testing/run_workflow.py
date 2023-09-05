@@ -27,12 +27,12 @@ def run_workflow(run_step: str = None) -> None:
     results_dir = Path(__file__).parent / "results"
 
     # Run ecm_prep.py
-    if run_step == 'ecm_prep' or run_step == None:
+    if run_step == 'ecm_prep' or run_step is None:
         opts = ecm_args(["--alt_regions_option", "EMM"])
         run_with_profiler(ecm_prep.main, opts, results_dir / "profile_ecm_prep.csv")
 
     # Run run.py
-    if run_step == 'run' or run_step == None:
+    if run_step == 'run' or run_step is None:
         opts = run.parse_args([])
         run_with_profiler(run.main, opts, results_dir / "profile_run.csv")
 
