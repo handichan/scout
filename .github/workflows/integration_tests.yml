@@ -56,6 +56,7 @@ jobs:
       - name: Run and profile workflow
         run: |
           branch_name="${{ github.head_ref }}"
+          echo $branch_name
           if [[ $branch_name == 'refs/heads/profiler' ]]; then
             steps=("ecm_prep" "run")
             for step in "${steps[@]}"; do
