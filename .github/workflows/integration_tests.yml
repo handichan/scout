@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.ref }}
       - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
@@ -55,7 +55,7 @@ jobs:
           pip install numpy>=1.16 pandas>=2.2 scipy requests numpy-financial matplotlib xlsxwriter psrecord     
       - name: Run and profile workflow
         run: |
-          branch_name="${{ github.head_ref }}"
+          branch_name="${{ github.ref }}"
           echo $branch_name
           if [[ $branch_name == 'refs/heads/profiler' ]]; then
             steps=("ecm_prep" "run")
@@ -75,7 +75,7 @@ jobs:
           path: ./tests/integration_testing/results/
       - name: Commit test results
         run: |
-          branch_name="${{ github.head_ref }}"
+          branch_name="${{ github.ref }}"
           git pull origin $branch_name
           git config --system user.email "github-action@users.noreply.github.com"
           git config --system user.name "GitHub Action"
