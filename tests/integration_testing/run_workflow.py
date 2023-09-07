@@ -28,7 +28,7 @@ def run_workflow(run_step: str = None) -> None:
 
     # Run ecm_prep.py
     if run_step == 'ecm_prep' or run_step is None:
-        opts = ecm_args(["--alt_regions_option", "EMM"])
+        opts = ecm_args(["--add_typ_eff", "--rp_persist", "--alt_regions_option", "EMM"])
         run_with_profiler(ecm_prep.main, opts, results_dir / "profile_ecm_prep.csv")
 
     # Run run.py
