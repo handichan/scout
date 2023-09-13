@@ -34,7 +34,8 @@ def run_workflow(run_step: str = None) -> None:
     # Run run.py
     if run_step == 'run' or run_step is None:
         opts = run.parse_args([])
-        run_with_profiler(run.main, opts, results_dir / "profile_run.csv")
+        # run_with_profiler(run.main, opts, results_dir / "profile_run.csv")
+        run.main(opts)
 
 
 def run_with_profiler(
