@@ -16,6 +16,7 @@ import warnings
 import copy
 import json
 import itertools
+import pandas as pd
 
 
 class CommonMethods(object):
@@ -92,8 +93,7 @@ class UserOptions(object):
                  no_scnd_lgt, floor_start, pkg_env_costs, exog_hp_rates,
                  grid_decarb, adopt_scn_restrict, retro_set, add_typ_eff,
                  pkg_env_sep, alt_ref_carb, detail_brkout, fugitive_emissions,
-                 warnings, no_eff_capt, incentive_levels, incentive_restrictions,
-                 low_volume_rate):
+                 warnings, no_eff_capt):
         # Options include site energy outputs, captured energy site-source
         # calculation method, alternate regions, time sensitive output metrics,
         # sector-level load shapes, and verbose mode that prints all warnings
@@ -119,9 +119,6 @@ class UserOptions(object):
         self.detail_brkout = detail_brkout
         self.fugitive_emissions = fugitive_emissions
         self.no_eff_capt = no_eff_capt
-        self.incentive_levels = incentive_levels
-        self.incentive_restrictions = incentive_restrictions
-        self.low_volume_rate = low_volume_rate
 
 
 class NullOpts(object):
@@ -2224,19 +2221,6 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                 ("AIA_CZ4", "<f8"), ("AIA_CZ5", "<f8")]),
             "levels": str([
                 "IECC_CZ" + str(n + 1) for n in range(8)])
-        }
-        # Note that in practice these coefficients are defined separately for each end use;
-        # set to same coefficient values for convenience in testing
-        handyvars.deflt_res_choice = {
-            "electric": {
-                x: [-0.01, -0.12] for x in [
-                    "heating", "secondary heating", "cooling", "water heating", "cooking",
-                    "drying", "lighting", "refrigeration", "ceiling fan", "fans and pumps",
-                    "computers", "TVs", "other"]},
-            "non-electric": {
-                x: [-0.01, -0.12] for x in [
-                    "heating", "secondary heating", "cooling", "water heating", "cooking",
-                    "drying"]}
         }
         cls.convert_data = {}
         cls.tsv_data = {}
@@ -18604,6 +18588,504 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                 measure.markets['Max adoption potential']['master_mseg'][
                                 'fugitive emissions']['refrigerants'],
                 self.ok_map_frefr_mkts_out[idx])
+
+    def test_dual_fuel(self):
+        """
+        Dual-fuel (STATE breakout, CA) — verify the outputs  master_mseg and
+        mseg_out_break are produced, contains both Electric and Non-Electric
+        for Heating (Equip.), and compare against the expected one.
+        """
+
+        # Initialize dummy measure with state-level inputs to draw from
+        base_state_meas = self.ok_tpmeas_partchk_state_in[0]
+        # Pull handyvars from first sample measure and set year range
+        hv = copy.deepcopy(base_state_meas.handyvars)
+        years = [str(y) for y in hv.aeo_years]
+
+        # Options: split fuel reporting + pick Max adoption potential
+        opts = copy.deepcopy(self.opts_state)
+        opts.split_fuel = True
+        opts.adopt_scn_usr = ["Max adoption potential"]
+
+        # Ensure fuel-split breakouts (Electric vs Non-Electric)
+        hv.out_break_fuels = OrderedDict([
+            ("Electric", ["electricity"]),
+            ("Non-Electric", ["natural gas", "distillate",
+                              "residual", "other fuel"]),
+        ])
+        # Rebuild the blank breakout template (mirrors UsefulVars behavior)
+        out_levels = [
+            list(hv.out_break_czones.keys()),
+            list(hv.out_break_bldgtypes.keys()),
+            list(hv.out_break_enduses.keys()),
+        ]
+        hv.out_break_in = OrderedDict()
+        for cz in out_levels[0]:
+            hv.out_break_in.setdefault(cz, OrderedDict())
+            for b in out_levels[1]:
+                hv.out_break_in[cz].setdefault(b, OrderedDict())
+                for eu in out_levels[2]:
+                    if (len(hv.out_break_fuels) != 0) and (
+                            eu in hv.out_break_eus_w_fsplits):
+                        hv.out_break_in[cz][b][eu] = OrderedDict(
+                            [(f, OrderedDict()) for f in hv.out_break_fuels.keys()]
+                        )
+                    else:
+                        hv.out_break_in[cz][b][eu] = OrderedDict()
+
+        # Seed BY-YEAR carbon price
+        carb_prices = hv.ccosts
+        carb_prices.update({y: 1 for y in years})
+
+        # Seed BY-YEAR energy price & carbon intensities
+        el_prices = hv.ecosts.setdefault(
+            "residential", {}).setdefault("electricity", {})
+        el_prices.update({y: 60.0 for y in years})
+        ng_prices = hv.ecosts["residential"].setdefault("natural gas", {})
+        ng_prices.update({y: 11.0 for y in years})
+
+        el_carb = hv.carb_int.setdefault(
+            "residential", {}).setdefault("electricity", {})
+        el_carb.update({y: 5.0e-08 for y in years})
+        ng_carb = hv.carb_int["residential"].setdefault("natural gas", {})
+        ng_carb.update({y: 5.0e-08 for y in years})
+
+        hv.ss_conv.setdefault("electricity", {})
+        hv.ss_conv.setdefault("natural gas", {})
+        for y in years:
+            hv.ss_conv["electricity"][y] = 1.0
+            hv.ss_conv["natural gas"][y] = 1.0
+
+        # Baseline microsegment (STATE: CA, SFH, NG heating → furnace (NG))
+        mseg_in_dual = {
+            "CA": {
+                "single family home": {
+                    "total square footage": {y: 100 for y in years},
+                    "total homes": {y: 1000 for y in years},
+                    "new homes": {y: 50 for y in years},
+                    "natural gas": {
+                        "heating": {
+                            "supply": {
+                                "furnace (NG)": {
+                                    "stock": {y: 10 for y in years},
+                                    "energy": {y: 100.0 for y in years},
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        }
+
+        # C/P/L for baseline NG furnace and switched-to ELECTRIC ASHP
+        def yrs(val): return {y: val for y in years}
+        cpl_in_dual = {
+            "pacific": {
+                "single family home": {
+                    "natural gas": {
+                        "heating": {
+                            "supply": {
+                                "furnace (NG)": {
+                                    "performance": {
+                                        "typical": yrs(0.8),
+                                        "best": yrs(0.8),
+                                        "units": "AFUE",
+                                        "source": "stub"},
+                                    "installed cost": {
+                                        "typical": {
+                                            "new": yrs(2000),
+                                            "existing": yrs(2000)},
+                                        "best": {
+                                            "new": yrs(2000),
+                                            "existing": yrs(2000)},
+                                        "units": "2014$/unit",
+                                        "source": "stub",
+                                    },
+                                    "lifetime": {
+                                        "average": yrs(15),
+                                        "range": yrs(5),
+                                        "units": "years",
+                                        "source": "stub"},
+                                    "consumer choice": {
+                                        "competed market share": {
+                                            "source": "stub",
+                                            "model type": "logistic regression",
+                                            "parameters": {
+                                                "b1": yrs("NA"),
+                                                "b2": yrs("NA")}},
+                                        "competed market": {
+                                            "source": "stub",
+                                            "model type": "bass diffusion",
+                                            "parameters": {
+                                                "p": "NA", "q": "NA"}},
+                                    },
+                                }
+                            }
+                        }
+                    },
+                    "electricity": {
+                        "heating": {
+                            "supply": {
+                                "ASHP": {
+                                    "performance": {
+                                        "typical": yrs(2.69),
+                                        "best": yrs(2.69),
+                                        "units": "COP",
+                                        "source": "stub"},
+                                    "installed cost": {
+                                        "typical": {
+                                            "new": yrs(6000),
+                                            "existing": yrs(6000)},
+                                        "best": {
+                                            "new": yrs(6000),
+                                            "existing": yrs(6000)},
+                                        "units": "2014$/unit",
+                                        "source": "stub",
+                                    },
+                                    "lifetime": {
+                                        "average": yrs(15),
+                                        "range": yrs(5),
+                                        "units": "years",
+                                        "source": "stub"},
+                                    "consumer choice": {
+                                        "competed market share": {
+                                            "source": "stub",
+                                            "model type": "logistic regression",
+                                            "parameters": {
+                                                "b1": yrs("NA"), "b2": yrs("NA")}},
+                                        "competed market": {
+                                            "source": "stub",
+                                            "model type": "bass diffusion",
+                                            "parameters": {"p": "NA", "q": "NA"}},
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        }
+
+        # Measure definition (aligned to dual fuel semantics)
+        meas_def = {
+            "name": "sample dual fuel measure",
+            "measure_type": "full service",
+            "market_entry_year": None, "market_exit_year": None,
+            "climate_zone": ["CA"],
+            "bldg_type": "single family home",
+            "structure_type": ["new", "existing"],
+            "end_use": "heating",
+            "fuel_type": "natural gas",
+            "fuel_switch_to": "electricity",
+            "technology": "furnace (NG)",
+            "tech_switch_to": "ASHP",
+            "energy_efficiency": {"heating": 2.69},
+            "energy_efficiency_units": "COP",
+            "installed_cost": 14000,
+            "cost_units": "2014$/unit",
+            "product_lifetime": 15,
+            # Required by fill_mkts init path
+            "market_scaling_fractions": None,
+            "market_scaling_fractions_source": None,
+        }
+
+        # Master mseg data that should be returned by test
+        user_master_mseg = {
+          "carbon": {
+            "competed": {
+              "baseline": {
+                "2009": 6.141666666666666e-07,
+                "2010": 5.95e-07
+              },
+              "efficient": {
+                "2009": 2.68954770755886e-07,
+                "2010": 2.605613382899628e-07
+              }
+            },
+            "total": {
+              "baseline": {
+                "2009": 4.9999999999999996e-06,
+                "2010": 5e-06
+              },
+              "efficient": {
+                "2009": 4.654788104089219e-06,
+                "2010": 4.320349442379182e-06
+              }
+            }
+          },
+          "cost": {
+            "carbon": {
+                "competed": {
+                  "baseline": {
+                    "2009": 6.141666666666666e-07,
+                    "2010": 5.95e-07
+                  },
+                  "efficient": {
+                    "2009": 2.68954770755886e-07,
+                    "2010": 2.605613382899628e-07
+                  }
+                },
+                "total": {
+                  "baseline": {
+                    "2009": 4.9999999999999996e-06,
+                    "2010": 5e-06
+                  },
+                  "efficient": {
+                    "2009": 4.654788104089219e-06,
+                    "2010": 4.320349442379182e-06
+                  }
+                }
+            },
+            "energy": {
+              "competed": {
+                "baseline": {
+                  "2009": 135.1166667,
+                  "2010": 130.9
+                },
+                "efficient": {
+                  "2009": 202.3690582,
+                  "2010": 196.0536059
+                }
+              },
+              "total": {
+                "baseline": {
+                  "2009": 1100,
+                  "2010": 1100
+                },
+                "efficient": {
+                  "2009": 1167.252392,
+                  "2010": 1232.405998
+                }
+              }
+            },
+            "stock": {
+              "competed": {
+                "baseline": {
+                  "2009": 2456.6666666666665,
+                  "2010": 2380.0
+                },
+                "efficient": {
+                  "2009": 17196.666679,
+                  "2010": 16660
+                }
+              },
+              "total": {
+                "baseline": {
+                  "2009": 2456.6666666666665,
+                  "2010": 4836.666666666666
+                },
+                "efficient": {
+                  "2009": 17196.66667,
+                  "2010": 33856.66667
+                }
+              }
+            }
+          },
+          "energy": {
+            "competed": {
+              "baseline": {
+                "2009": 12.283333333333333,
+                "2010": 11.899999999999999
+              },
+              "efficient": {
+                "2009": 5.379095415117721,
+                "2010": 5.211226765799257
+              }
+            },
+            "total": {
+              "baseline": {
+                "2009": 100.0,
+                "2010": 100.0
+              },
+              "efficient": {
+                "2009": 93.09576208178439,
+                "2010": 86.40698884758365
+              }
+            }
+          },
+          "lifetime": {
+            "baseline": {
+              "2009": 15.0,
+              "2010": 15.0
+            },
+            "measure": 15.0
+          },
+          "stock": {
+            "competed": {
+              "all": {
+                "2009": 1.2283333333333333,
+                "2010": 1.19
+              },
+              "measure": {
+                "2009": 1.2283333333333333,
+                "2010": 1.19
+              }
+            },
+            "total": {
+              "all": {
+                "2009": 10.0,
+                "2010": 10.0
+              },
+              "measure": {
+                "2009": 1.2283333333333333,
+                "2010": 2.418333333333333
+              }
+            }
+          }
+        }
+
+        # Breakout data that should be returned by the test
+        user_mseg_breakout = {
+            "baseline": {
+                  "Computers and Electronics": {},
+                  "Cooking": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Cooling (Env.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Cooling (Equip.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Heating (Env.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Heating (Equip.)": {
+                    "Electric": {
+                      "2009": 0,
+                      "2010": 0
+                    },
+                    "Non-Electric": {
+                      "2009": 95.0,
+                      "2010": 90.0
+                    }
+                  },
+                  "Lighting": {},
+                  "Other": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Refrigeration": {},
+                  "Ventilation": {},
+                  "Water Heating": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  }
+                },
+            "efficient": {
+                  "Computers and Electronics": {},
+                  "Cooking": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Cooling (Env.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Cooling (Equip.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Heating (Env.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Heating (Equip.)": {
+                    "Electric": {
+                      "2009": 1.73283767,
+                      "2010": 3.374473358
+                    },
+                    "Non-Electric": {
+                      "2009": 89.17333333,
+                      "2010": 78.65333333
+                    }
+                  },
+                  "Lighting": {},
+                  "Other": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Refrigeration": {},
+                  "Ventilation": {},
+                  "Water Heating": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  }
+                },
+            "savings": {
+                  "Computers and Electronics": {},
+                  "Cooking": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Cooling (Env.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Cooling (Equip.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Heating (Env.)": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Heating (Equip.)": {
+                    "Electric": {
+                      "2009": -1.7328376703841428,
+                      "2010": -3.374473358116475
+                    },
+                    "Non-Electric": {
+                      "2009": 5.826666666666668,
+                      "2010": 11.346666666666664
+                    }
+                  },
+                  "Lighting": {},
+                  "Other": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  },
+                  "Refrigeration": {},
+                  "Ventilation": {},
+                  "Water Heating": {
+                    "Electric": {},
+                    "Non-Electric": {}
+                  }
+                }
+        }
+
+        # Build the measure and assign CA backup fraction (remain_frac = 0.20)
+        measure = ecm_prep.Measure(
+            os.getcwd(), hv, None, base_state_meas.usr_opts, **meas_def
+        )
+        measure.backup_fuel_fraction = pd.DataFrame(
+            [{"state": "CA", "remain_frac": 0.20}])
+        # Calculate markets data for dual fuel measure
+        measure.fill_mkts(
+            mseg_in_dual, cpl_in_dual, self.convert_data, self.tsv_data, opts,
+            ctrb_ms_pkg_prep=[], tsv_data_nonfs=None
+        )
+        # Check high-level markets data against expected values
+        self.dict_check(
+            measure.markets['Max adoption potential']['master_mseg'],
+            user_master_mseg
+        )
+        # Stitch together generated breakout data needed for comparison against expected values
+        scout_gen_brkout = {
+            "baseline": measure.markets['Max adoption potential']['mseg_out_break'][
+                "energy"]["baseline"]["CA"]["Residential (Existing)"],
+            "efficient": measure.markets['Max adoption potential']['mseg_out_break'][
+                "energy"]["efficient"]["CA"]["Residential (Existing)"],
+            "savings": measure.markets['Max adoption potential']['mseg_out_break'][
+                "energy"]["savings"]["CA"]["Residential (Existing)"]
+        }
+        # Check detailed residential existing CA breakouts against expected values
+        self.dict_check(
+            scout_gen_brkout, user_mseg_breakout)
 
 
 class TimeSensitiveValuationTest(unittest.TestCase, CommonMethods):
@@ -63322,8 +63804,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
             diffusion parameters to be used in 'adjusted adoption' scenario.
         ok_mskeys_in (list): Sample key chains associated with the market
             microsegment being partitioned by the function.
-        ok_mskeys_swtch_in (str): Sample key chain for mseg measure switches
-            to, as applicable.
         ok_mkt_scale_frac_in (float): Sample market microsegment scaling
             factor.
         ok_tsv_scale_fracs_in (dict): Sample time sensitive valuation scaling
@@ -63583,7 +64063,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
             ('primary', 'AIA_CZ1', 'single family home',
              'electricity', 'heating', 'supply', 'resistance heat',
              'existing')]
-        cls.ok_mskeys_swtch_in = None
         cls.ok_bldg_sect_in = ["residential", "residential"]
         cls.ok_sqft_subst_in = [0, 0]
         cls.ok_mkt_scale_frac_in = 1
@@ -63721,8 +64200,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                   '2011': 0},
                                  {'2009': 0.34772729873657227,
                                   '2010': 0.3636363744735718,
-                                  '2011': 0.3795454502105713},
-                                 1],
+                                  '2011': 0.3795454502105713}],
                                 [{'2009': 34.77272987365723,
                                   '2010': 36.36363744735718,
                                   '2011': 37.95454502105713},
@@ -63822,8 +64300,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                   '2011': 0},
                                  {'2009': 0.34772729873657227,
                                   '2010': 0.3636363744735718,
-                                  '2011': 0.3795454502105713},
-                                 1]],
+                                  '2011': 0.3795454502105713}]],
                                [[{'2009': 34.77272987365723,
                                   '2010': 36.36363744735718,
                                   '2011': 37.95454502105713},
@@ -63923,8 +64400,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                   '2011': 0},
                                  {'2009': 0.34772729873657227,
                                   '2010': 0.3636363744735718,
-                                  '2011': 0.3795454502105713},
-                                 1],
+                                  '2011': 0.3795454502105713}],
                                 [{'2009': 34.77272987365723,
                                   '2010': 36.36363744735718,
                                   '2011': 37.95454502105713},
@@ -64024,8 +64500,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                   '2011': 0},
                                  {'2009': 0.34772729873657227,
                                   '2010': 0.3636363744735718,
-                                  '2011': 0.3795454502105713},
-                                 1]]]
+                                  '2011': 0.3795454502105713}]]]
         cls.ok_out_bass = [[[{'2009': 0.0,
                               '2010': 0.37046322242013996,
                               '2011': 1.9299213234335353},
@@ -64125,8 +64600,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                               '2011': 0},
                              {'2009': 0.0,
                               '2010': 0.0037046322242014,
-                              '2011': 0.019299213234335352},
-                             1],
+                              '2011': 0.019299213234335352}],
                             [{'2009': 0.0,
                               '2010': 0.37046322242013996,
                               '2011': 1.9299213234335353},
@@ -64226,8 +64700,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                               '2011': 0},
                              {'2009': 0.0,
                               '2010': 0.0037046322242014,
-                              '2011': 0.019299213234335352},
-                             1]],
+                              '2011': 0.019299213234335352}]],
                            [[{'2009': 0.0,
                               '2010': 0.37046322242013996,
                               '2011': 1.9299213234335353},
@@ -64327,8 +64800,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                               '2011': 0},
                              {'2009': 0.0,
                               '2010': 0.0037046322242014,
-                              '2011': 0.019299213234335352},
-                             1],
+                              '2011': 0.019299213234335352}],
                             [{'2009': 0.0,
                               '2010': 0.37046322242013996,
                               '2011': 1.9299213234335353},
@@ -64428,8 +64900,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                               '2011': 0},
                              {'2009': 0.0,
                               '2010': 0.0037046322242014,
-                              '2011': 0.019299213234335352},
-                             1]]]
+                              '2011': 0.019299213234335352}]]]
         cls.ok_out_fraction_string = [[[{'2009': 30.000001192092896,
                                          '2010': 30.000001192092896,
                                          '2011': 30.000001192092896},
@@ -64529,8 +65000,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                          '2011': 0},
                                         {'2009': 0.30000001192092896,
                                          '2010': 0.30000001192092896,
-                                         '2011': 0.30000001192092896},
-                                        1],
+                                         '2011': 0.30000001192092896}],
                                        [{'2009': 30.000001192092896,
                                          '2010': 30.000001192092896,
                                          '2011': 30.000001192092896},
@@ -64630,8 +65100,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                          '2011': 0},
                                         {'2009': 0.30000001192092896,
                                          '2010': 0.30000001192092896,
-                                         '2011': 0.30000001192092896},
-                                        1]],
+                                         '2011': 0.30000001192092896}]],
                                       [[{'2009': 30.000001192092896,
                                          '2010': 30.000001192092896,
                                          '2011': 30.000001192092896},
@@ -64731,8 +65200,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                          '2011': 0},
                                         {'2009': 0.30000001192092896,
                                          '2010': 0.30000001192092896,
-                                         '2011': 0.30000001192092896},
-                                        1],
+                                         '2011': 0.30000001192092896}],
                                        [{'2009': 30.000001192092896,
                                          '2010': 30.000001192092896,
                                          '2011': 30.000001192092896},
@@ -64832,8 +65300,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                          '2011': 0},
                                         {'2009': 0.30000001192092896,
                                          '2010': 0.30000001192092896,
-                                         '2011': 0.30000001192092896},
-                                        1]]]
+                                         '2011': 0.30000001192092896}]]]
         cls.ok_out_bass_string = [[[{'2009': 0.0,
                                      '2010': 0.37046322242013996,
                                      '2011': 1.9299213234335353},
@@ -64933,8 +65400,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                      '2011': 0},
                                     {'2009': 0.0,
                                      '2010': 0.0037046322242014,
-                                     '2011': 0.019299213234335352},
-                                    1],
+                                     '2011': 0.019299213234335352}],
                                    [{'2009': 0.0,
                                      '2010': 0.37046322242013996,
                                      '2011': 1.9299213234335353},
@@ -65034,8 +65500,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                      '2011': 0},
                                     {'2009': 0.0,
                                      '2010': 0.0037046322242014,
-                                     '2011': 0.019299213234335352},
-                                    1]],
+                                     '2011': 0.019299213234335352}]],
                                   [[{'2009': 0.0,
                                      '2010': 0.37046322242013996,
                                      '2011': 1.9299213234335353},
@@ -65135,8 +65600,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                      '2011': 0},
                                     {'2009': 0.0,
                                      '2010': 0.0037046322242014,
-                                     '2011': 0.019299213234335352},
-                                    1],
+                                     '2011': 0.019299213234335352}],
                                    [{'2009': 0.0,
                                      '2010': 0.37046322242013996,
                                      '2011': 1.9299213234335353},
@@ -65236,8 +65700,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                      '2011': 0},
                                     {'2009': 0.0,
                                      '2010': 0.0037046322242014,
-                                     '2011': 0.019299213234335352},
-                                    1]]]
+                                     '2011': 0.019299213234335352}]]]
         cls.ok_out_bad_string = [[[{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -65337,8 +65800,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1],
+                                    '2011': 1}],
                                   [{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -65438,8 +65900,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1]],
+                                    '2011': 1}]],
                                  [[{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -65539,8 +66000,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1],
+                                    '2011': 1}],
                                   [{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -65640,8 +66100,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1]]]
+                                    '2011': 1}]]]
         cls.ok_out_bad_values = [[[{'2009': 0.0,
                                     '2010': 0.0,
                                     '2011': 0.0},
@@ -65741,8 +66200,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 0.0,
                                     '2010': 0.0,
-                                    '2011': 0.0},
-                                   1],
+                                    '2011': 0.0}],
                                   [{'2009': 0.0,
                                     '2010': 0.0,
                                     '2011': 0.0},
@@ -65842,8 +66300,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 0.0,
                                     '2010': 0.0,
-                                    '2011': 0.0},
-                                   1]],
+                                    '2011': 0.0}]],
                                  [[{'2009': 0.0,
                                     '2010': 0.0,
                                     '2011': 0.0},
@@ -65943,8 +66400,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 0.0,
                                     '2010': 0.0,
-                                    '2011': 0.0},
-                                   1],
+                                    '2011': 0.0}],
                                   [{'2009': 0.0,
                                     '2010': 0.0,
                                     '2011': 0.0},
@@ -66044,8 +66500,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 0.0,
                                     '2010': 0.0,
-                                    '2011': 0.0},
-                                   1]]]
+                                    '2011': 0.0}]]]
         cls.ok_out_wrong_name = [[[{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -66145,8 +66600,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1],
+                                    '2011': 1}],
                                   [{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -66246,8 +66700,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1]],
+                                    '2011': 1}]],
                                  [[{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -66347,8 +66800,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1],
+                                    '2011': 1}],
                                   [{'2009': 100,
                                     '2010': 100,
                                     '2011': 100},
@@ -66448,8 +66900,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                     '2011': 0},
                                    {'2009': 1,
                                     '2010': 1,
-                                    '2011': 1},
-                                   1]]]
+                                    '2011': 1}]]]
 
         cls.ok_out = [[[
                 {"2009": 100, "2010": 100, "2011": 100},
@@ -66487,8 +66938,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 {"2009": 0, "2010": 0, "2011": 0},
                 {"2009": 0, "2010": 0, "2011": 0},
                 {"2009": 0, "2010": 0, "2011": 0},
-                {"2009": 1, "2010": 1, "2011": 1},
-                1],
+                {"2009": 1, "2010": 1, "2011": 1}],
                 [
                 {"2009": 100, "2010": 100, "2011": 100},
                 {"2009": 10, "2010": 20, "2011": 30},
@@ -66525,8 +66975,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 {"2009": 0, "2010": 0, "2011": 0},
                 {"2009": 0, "2010": 0, "2011": 0},
                 {"2009": 0, "2010": 0, "2011": 0},
-                {"2009": 1, "2010": 1, "2011": 1},
-                1]],
+                {"2009": 1, "2010": 1, "2011": 1}]],
                 [[
                  {"2009": 100, "2010": 100, "2011": 100},
                  {"2009": 10, "2010": 20, "2011": 30},
@@ -66563,8 +67012,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                  {"2009": 0, "2010": 0, "2011": 0},
                  {"2009": 0, "2010": 0, "2011": 0},
                  {"2009": 0, "2010": 0, "2011": 0},
-                 {"2009": 1, "2010": 1, "2011": 1},
-                 1],
+                 {"2009": 1, "2010": 1, "2011": 1}],
                  [
                  {"2009": 100, "2010": 100, "2011": 100},
                  {"2009": 10, "2010": 20, "2011": 30},
@@ -66601,8 +67049,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                  {"2009": 0, "2010": 0, "2011": 0},
                  {"2009": 0, "2010": 0, "2011": 0},
                  {"2009": 0, "2010": 0, "2011": 0},
-                 {"2009": 1, "2010": 1, "2011": 1},
-                 1]]]
+                 {"2009": 1, "2010": 1, "2011": 1}]]]
 
     def test_ok(self):
         """Test the 'partition_microsegment' function given valid inputs.
@@ -66716,7 +67163,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                 self.handyvars.adopt_schemes_prep[scn],
                                 self.ok_diffuse_params_in,
                                 self.ok_mskeys_in[k],
-                                self.ok_mskeys_swtch_in,
                                 self.ok_bldg_sect_in[k],
                                 self.ok_sqft_subst_in[k],
                                 self.ok_mkt_scale_frac_in,
@@ -66752,7 +67198,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                         self.handyvars.adopt_schemes_prep[scn],
                                         self.ok_diffuse_params_in,
                                         self.ok_mskeys_in[k],
-                                        self.ok_mskeys_swtch_in,
                                         self.ok_bldg_sect_in[k],
                                         self.ok_sqft_subst_in[k],
                                         self.ok_mkt_scale_frac_in,
@@ -66791,7 +67236,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                             self.handyvars.adopt_schemes_prep[scn],
                             self.ok_diffuse_params_in,
                             self.ok_mskeys_in[k],
-                            self.ok_mskeys_swtch_in,
                             self.ok_bldg_sect_in[k],
                             self.ok_sqft_subst_in[k],
                             self.ok_mkt_scale_frac_in,
@@ -66829,7 +67273,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                 self.handyvars.adopt_schemes_prep[scn],
                                 self.ok_diffuse_params_in,
                                 self.ok_mskeys_in[k],
-                                self.ok_mskeys_swtch_in,
                                 self.ok_bldg_sect_in[k],
                                 self.ok_sqft_subst_in[k],
                                 self.ok_mkt_scale_frac_in,
@@ -66866,9 +67309,8 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts,
                 # except for the warning messages
                 for elem2 in range(0, len(lists_check_fraction)):
-                    # Handle possible NoneTypes or integers in the function output
-                    if lists_check_fraction[elem2] is not None and not isinstance(
-                            lists_check_fraction[elem2], int):
+                    # Handle possible NoneTypes in the function output
+                    if lists_check_fraction[elem2] is not None:
                         self.dict_check(lists_check_fraction[elem2],
                                         lists_fraction[elem2])
                     else:
@@ -66880,8 +67322,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts
                 for elem2 in range(0, len(lists_check_bass)):
                     # Handle possible NoneTypes in the function output
-                    if lists_check_bass[elem2] is not None and not isinstance(
-                            lists_check_bass[elem2], int):
+                    if lists_check_bass[elem2] is not None:
                         self.dict_check(lists_check_bass[elem2],
                                         lists_bass[elem2])
                     else:
@@ -66894,8 +67335,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts
                 for elem2 in range(0, len(lists_check_fraction_string)):
                     # Handle possible NoneTypes in the function output
-                    if lists_check_fraction_string[elem2] is not None and not isinstance(
-                            lists_check_fraction_string[elem2], int):
+                    if lists_check_fraction_string[elem2] is not None:
                         self.dict_check(lists_check_fraction_string[elem2],
                                         lists_fraction_string[elem2])
                     else:
@@ -66907,8 +67347,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts
                 for elem2 in range(0, len(lists_check_bass_string)):
                     # Handle possible NoneTypes in the function output
-                    if lists_check_bass_string[elem2] is not None and not isinstance(
-                            lists_check_bass_string[elem2], int):
+                    if lists_check_bass_string[elem2] is not None:
                         self.dict_check(lists_check_bass_string[elem2],
                                         lists_bass_string[elem2])
                     else:
@@ -67029,7 +67468,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                self.handyvars.adopt_schemes_prep[scn],
                                self.ok_diffuse_params_in,
                                self.ok_mskeys_in[k],
-                               self.ok_mskeys_swtch_in,
                                self.ok_bldg_sect_in[k],
                                self.ok_sqft_subst_in[k],
                                self.ok_mkt_scale_frac_in,
@@ -67066,7 +67504,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                                    self.handyvars.adopt_schemes_prep[scn],
                                    self.ok_diffuse_params_in,
                                    self.ok_mskeys_in[k],
-                                   self.ok_mskeys_swtch_in,
                                    self.ok_bldg_sect_in[k],
                                    self.ok_sqft_subst_in[k],
                                    self.ok_mkt_scale_frac_in,
@@ -67103,7 +67540,6 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                            self.handyvars.adopt_schemes_prep[scn],
                            self.ok_diffuse_params_in,
                            self.ok_mskeys_in[k],
-                           self.ok_mskeys_swtch_in,
                            self.ok_bldg_sect_in[k],
                            self.ok_sqft_subst_in[k],
                            self.ok_mkt_scale_frac_in,
@@ -67138,8 +67574,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts
                 for elem2 in range(0, len(lists_check_bad_string)):
                     # Handle possible NoneTypes in the function output
-                    if lists_check_bad_string[elem2] is not None and not isinstance(
-                            lists_check_bad_string[elem2], int):
+                    if lists_check_bad_string[elem2] is not None:
                         self.dict_check(lists_check_bad_string[elem2],
                                         lists_bad_string[elem2])
                     else:
@@ -67151,8 +67586,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts
                 for elem2 in range(0, len(lists_check_bad_values)):
                     # Handle possible NoneTypes in the function output
-                    if lists_check_bad_values[elem2] is not None and not isinstance(
-                            lists_check_bad_values[elem2], int):
+                    if lists_check_bad_values[elem2] is not None:
                         self.dict_check(lists_check_bad_values[elem2],
                                         lists_bad_values[elem2])
                     else:
@@ -67164,8 +67598,7 @@ class PartitionMicrosegmentTest(unittest.TestCase, CommonMethods):
                 # Compare each element of the lists of output dicts
                 for elem2 in range(0, len(lists_check_wrong_name)):
                     # Handle possible NoneTypes in the function output
-                    if lists_check_wrong_name[elem2] is not None and not isinstance(
-                            lists_check_wrong_name[elem2], int):
+                    if lists_check_wrong_name[elem2] is not None:
                         self.dict_check(lists_check_wrong_name[elem2],
                                         lists_wrong_name[elem2])
                     else:
@@ -68455,7 +68888,6 @@ class AppendKeyValsTest(unittest.TestCase):
             'secondary heater (LPG)', 'roof', 'ground', 'windows solar',
             'windows conduction', 'equipment gain', 'people gain', 'wall',
             'infiltration', 'lighting gain', 'floor', 'other heat gain',
-            'internal gains',
             'VAV_Vent', 'CAV_Vent', 'solar water heater', 'solar_water_heater_north',
             'HP water heater',
             'elec_water_heater', 'rooftop_AC', 'pkg_terminal_AC-cool',
@@ -124656,24 +125088,6 @@ class UpdateMeasuresTest(unittest.TestCase, CommonMethods):
         expected_invalid = ["Prosp. Res. ASHP (FS) + Env. + Ctls."]
         self.assertEqual(invalid_pkgs, expected_invalid)
 
-    def test_ecm_field_updates(self):
-        """Tests that ecm_field_updates argument correctly updates all ECMs
-        """
-        opts = copy.deepcopy(self.opts_aia)
-        opts.ecm_field_updates = {"climate_zone": ["AIA_CZ1", "AIA_CZ2"],
-                                  "another_field": "another_val"}
-        measures_out_aia = ecm_prep.prepare_measures(
-            self.aia_measures, self.convert_data,
-            self.sample_mseg_in_aia,
-            self.sample_cpl_in_aia, self.handyvars_aia,
-            self.handyfiles_aia, self.cbecs_sf_byvint,
-            self.sample_tsv_data, self.base_dir, opts,
-            ctrb_ms_pkg_prep=[], tsv_data_nonfs=None)
-
-        for measure in measures_out_aia:
-            for ecm_field, new_val in opts.ecm_field_updates.items():
-                self.assertEqual(getattr(measure, ecm_field), new_val)
-
     def test_contributing_ecm_add(self):
         """Tests automatic adding of ECMs required for selected package(s)
         """
@@ -128336,7 +128750,6 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
             "Technical potential": {
                 "contributing mseg keys and values": {},
                 "competed choice parameters": {},
-                "capacity factor": {},
                 "secondary mseg adjustments": {
                     "market share": {
                         "original energy (total captured)": {},
@@ -128346,7 +128759,6 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
             "Max adoption potential": {
                 "contributing mseg keys and values": {},
                 "competed choice parameters": {},
-                "capacity factor": {},
                 "secondary mseg adjustments": {
                     "market share": {
                         "original energy (total captured)": {},
@@ -128357,7 +128769,6 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
             "Technical potential": {
                 "contributing mseg keys and values": {},
                 "competed choice parameters": {},
-                "capacity factor": {},
                 "secondary mseg adjustments": {
                     "market share": {
                         "original energy (total captured)": {},
@@ -128367,7 +128778,6 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
             "Max adoption potential": {
                 "contributing mseg keys and values": {},
                 "competed choice parameters": {},
-                "capacity factor": {},
                 "secondary mseg adjustments": {
                     "market share": {
                         "original energy (total captured)": {},
@@ -128378,7 +128788,6 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
             "Technical potential": {
                 "contributing mseg keys and values": {},
                 "competed choice parameters": {},
-                "capacity factor": {},
                 "secondary mseg adjustments": {
                     "market share": {
                         "original energy (total captured)": {},
@@ -128388,7 +128797,6 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
             "Max adoption potential": {
                 "contributing mseg keys and values": {},
                 "competed choice parameters": {},
-                "capacity factor": {},
                 "secondary mseg adjustments": {
                     "market share": {
                         "original energy (total captured)": {},
@@ -128405,21 +128813,19 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
              "name", "remove", "retro_rate", 'tech_switch_to', 'technology',
              'end_use', 'technology_type', "htcl_tech_link",
              'yrs_on_mkt', 'measure_type', 'usr_opts', 'fuel_switch_to',
-             'backup_fuel_fraction', 'min_eff_elec_flag', 'hp_convert_flag',
-             'add_cool_anchor_tech'],
+             'backup_fuel_fraction'],
             ["market_entry_year", "market_exit_year", "markets",
              "name", "remove", "retro_rate", 'tech_switch_to', 'technology',
              'end_use', 'technology_type', "htcl_tech_link",
              'yrs_on_mkt', 'measure_type', 'usr_opts', 'fuel_switch_to',
-             'backup_fuel_fraction', 'min_eff_elec_flag', 'hp_convert_flag',
-             'add_cool_anchor_tech'],
+             'backup_fuel_fraction'],
             ['benefits', 'bldg_type', 'climate_zone', 'end_use', 'fuel_type',
              'tech_switch_to', "htcl_tech_link", "technology",
              "technology_type", "market_entry_year", "market_exit_year",
              'markets', 'contributing_ECMs', 'name', 'pkg_env_costs',
              'pkg_env_cost_convert_data', 'remove',
              'structure_type', 'yrs_on_mkt', 'meas_typ',
-             'usr_opts', 'fuel_switch_to', 'backup_fuel_fraction', 'min_eff_elec_flag']]
+             'usr_opts', 'fuel_switch_to', 'backup_fuel_fraction']]
         cls.sample_pkg_meas_names = [x["name"] for x in sample_measindiv_dicts]
 
     def test_cleanup(self):
