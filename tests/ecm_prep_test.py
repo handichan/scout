@@ -16,7 +16,6 @@ import warnings
 import copy
 import json
 import itertools
-import pandas as pd
 
 
 class CommonMethods(object):
@@ -18589,13 +18588,14 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                                 'fugitive emissions']['refrigerants'],
                 self.ok_map_frefr_mkts_out[idx])
 
-    def test_dual_fuel(self):
+    def test_added_cooling(self):
         """
-        Dual-fuel (STATE breakout, CA) — verify the outputs  master_mseg and
-        mseg_out_break are produced, contains both Electric and Non-Electric
-        for Heating (Equip.), and compare against the expected one.
+        Added cooling only (no dual-fuel).
+        Construct a minimal NG→Electric (ASHP) full-service HP measure that
+        adds cooling where baseline has (effectively) none.
+        Validate that mseg_out_break is populated and
+        contains Cooling (Equip.) under the efficient branch for CA.
         """
-
         # Initialize dummy measure with state-level inputs to draw from
         base_state_meas = self.ok_tpmeas_partchk_state_in[0]
         # Pull handyvars from first sample measure and set year range
@@ -18611,7 +18611,7 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
         hv.out_break_fuels = OrderedDict([
             ("Electric", ["electricity"]),
             ("Non-Electric", ["natural gas", "distillate",
-                              "residual", "other fuel"]),
+             "residual", "other fuel"]),
         ])
         # Rebuild the blank breakout template (mirrors UsefulVars behavior)
         out_levels = [
@@ -18628,7 +18628,7 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                     if (len(hv.out_break_fuels) != 0) and (
                             eu in hv.out_break_eus_w_fsplits):
                         hv.out_break_in[cz][b][eu] = OrderedDict(
-                            [(f, OrderedDict()) for f in hv.out_break_fuels.keys()]
+                            (f, OrderedDict()) for f in hv.out_break_fuels.keys()
                         )
                     else:
                         hv.out_break_in[cz][b][eu] = OrderedDict()
@@ -18637,7 +18637,7 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
         carb_prices = hv.ccosts
         carb_prices.update({y: 1 for y in years})
 
-        # Seed BY-YEAR energy price & carbon intensities
+        # Seed BY-YEAR electricity price & carbon intensities
         el_prices = hv.ecosts.setdefault(
             "residential", {}).setdefault("electricity", {})
         el_prices.update({y: 60.0 for y in years})
@@ -18656,8 +18656,10 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
             hv.ss_conv["electricity"][y] = 1.0
             hv.ss_conv["natural gas"][y] = 1.0
 
-        # Baseline microsegment (STATE: CA, SFH, NG heating → furnace (NG))
-        mseg_in_dual = {
+        # Baseline microsegments (STATE: CA, SFH)
+        # - Heating on NG furnace (present)
+        # - Cooling: absent in portion of baseline measure applies to
+        mseg_in = {
             "CA": {
                 "single family home": {
                     "total square footage": {y: 100 for y in years},
@@ -18673,13 +18675,37 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                             }
                         }
                     },
+                    "electricity": {
+                        "cooling": {
+                            "supply": {
+                                "central AC": {
+                                    "stock": {y: 1 for y in years},
+                                    "energy": {y: 100 for y in years},
+                                },
+                                "ASHP": {
+                                    "stock": {y: 1 for y in years},
+                                    "energy": {y: 100 for y in years},
+                                }
+                            }
+                        },
+                        "heating": {
+                            "supply": {
+                                "ASHP": {
+                                    "stock": {y: 1 for y in years},
+                                    "energy": {y: 100 for y in years},
+                                }
+                            }
+                        }
+                    },
                 }
             }
         }
 
-        # C/P/L for baseline NG furnace and switched-to ELECTRIC ASHP
         def yrs(val): return {y: val for y in years}
-        cpl_in_dual = {
+
+        # C/P/L for baseline NG furnace, baseline central AC,
+        # and switched-to ASHP (heating + cooling provided by measure)
+        cpl_in = {
             "pacific": {
                 "single family home": {
                     "natural gas": {
@@ -18687,32 +18713,26 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                             "supply": {
                                 "furnace (NG)": {
                                     "performance": {
-                                        "typical": yrs(0.8),
-                                        "best": yrs(0.8),
-                                        "units": "AFUE",
-                                        "source": "stub"},
+                                        "typical": yrs(0.8), "best": yrs(0.8),
+                                        "units": "AFUE", "source": "stub"},
                                     "installed cost": {
                                         "typical": {
                                             "new": yrs(2000),
                                             "existing": yrs(2000)},
-                                        "best": {
+                                        "best":    {
                                             "new": yrs(2000),
                                             "existing": yrs(2000)},
-                                        "units": "2014$/unit",
-                                        "source": "stub",
-                                    },
+                                        "units":
+                                            "2014$/unit", "source": "stub"},
                                     "lifetime": {
-                                        "average": yrs(15),
-                                        "range": yrs(5),
-                                        "units": "years",
-                                        "source": "stub"},
+                                        "average": yrs(15), "range": yrs(5),
+                                        "units": "years", "source": "stub"},
                                     "consumer choice": {
                                         "competed market share": {
                                             "source": "stub",
                                             "model type": "logistic regression",
                                             "parameters": {
-                                                "b1": yrs("NA"),
-                                                "b2": yrs("NA")}},
+                                                "b1": yrs("NA"), "b2": yrs("NA")}},
                                         "competed market": {
                                             "source": "stub",
                                             "model type": "bass diffusion",
@@ -18724,29 +18744,76 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                         }
                     },
                     "electricity": {
+                        "cooling": {
+                            "supply": {
+                                "central AC": {
+                                    "performance": {
+                                        "typical": yrs(3.5), "best": yrs(3.5),
+                                        "units": "COP", "source": "stub"},
+                                    "installed cost": {
+                                        "typical": {
+                                            "new": yrs(3000), "existing": yrs(3000)},
+                                        "best":    {
+                                            "new": yrs(3000), "existing": yrs(3000)},
+                                        "units": "2014$/unit", "source": "stub"},
+                                    "lifetime": {
+                                        "average": yrs(12), "range": yrs(3),
+                                        "units": "years", "source": "stub"},
+                                    "consumer choice": {
+                                        "competed market share": {
+                                            "source": "stub",
+                                            "model type": "logistic regression",
+                                            "parameters": {
+                                                "b1": yrs("NA"), "b2": yrs("NA")}},
+                                        "competed market": {
+                                            "source": "stub",
+                                            "model type": "bass diffusion",
+                                            "parameters": {
+                                                "p": "NA", "q": "NA"}},
+                                    },
+                                },
+                                "ASHP": {
+                                    "performance": {
+                                        "typical": yrs(4.69), "best": yrs(4.69),
+                                        "units": "COP", "source": "addedcooling.json"},
+                                    "installed cost": {
+                                        "typical": {
+                                            "new": yrs(6000), "existing": yrs(6000)},
+                                        "best":    {
+                                            "new": yrs(6000), "existing": yrs(6000)},
+                                        "units": "2014$/unit", "source": "stub"},
+                                    "lifetime": {
+                                        "average": yrs(15), "range": yrs(5),
+                                        "units": "years", "source": "stub"},
+                                    "consumer choice": {
+                                        "competed market share": {
+                                            "source": "stub",
+                                            "model type": "logistic regression",
+                                            "parameters": {
+                                                "b1": yrs("NA"), "b2": yrs("NA")}},
+                                        "competed market": {
+                                            "source": "stub",
+                                            "model type": "bass diffusion",
+                                            "parameters": {"p": "NA", "q": "NA"}},
+                                    },
+                                }
+                            }
+                        },
                         "heating": {
                             "supply": {
                                 "ASHP": {
                                     "performance": {
-                                        "typical": yrs(2.69),
-                                        "best": yrs(2.69),
-                                        "units": "COP",
-                                        "source": "stub"},
+                                        "typical": yrs(2.69), "best": yrs(2.69),
+                                        "units": "COP", "source": "addedcooling.json"},
                                     "installed cost": {
                                         "typical": {
-                                            "new": yrs(6000),
-                                            "existing": yrs(6000)},
-                                        "best": {
-                                            "new": yrs(6000),
-                                            "existing": yrs(6000)},
-                                        "units": "2014$/unit",
-                                        "source": "stub",
-                                    },
+                                            "new": yrs(6000), "existing": yrs(6000)},
+                                        "best":    {
+                                            "new": yrs(6000), "existing": yrs(6000)},
+                                        "units": "2014$/unit", "source": "stub"},
                                     "lifetime": {
-                                        "average": yrs(15),
-                                        "range": yrs(5),
-                                        "units": "years",
-                                        "source": "stub"},
+                                        "average": yrs(15), "range": yrs(5),
+                                        "units": "years", "source": "stub"},
                                     "consumer choice": {
                                         "competed market share": {
                                             "source": "stub",
@@ -18766,50 +18833,50 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
             }
         }
 
-        # Measure definition (aligned to dual fuel semantics)
+        # Measure definition (no backup_fuel_fraction here — NOT a dual-fuel test)
         meas_def = {
-            "name": "sample dual fuel measure",
+            "name": "sample measure that adds cooling",
             "measure_type": "full service",
             "market_entry_year": None, "market_exit_year": None,
             "climate_zone": ["CA"],
             "bldg_type": "single family home",
             "structure_type": ["new", "existing"],
-            "end_use": "heating",
-            "fuel_type": "natural gas",
+            "end_use": ["heating", "cooling"],
+            "fuel_type": ["natural gas", "electricity"],
             "fuel_switch_to": "electricity",
-            "technology": "furnace (NG)",
+            "technology": ["furnace (NG)", "central AC"],
             "tech_switch_to": "ASHP",
-            "energy_efficiency": {"heating": 2.69},
+            "energy_efficiency": {"heating": 2.69, "cooling": 4.69},
             "energy_efficiency_units": "COP",
             "installed_cost": 14000,
             "cost_units": "2014$/unit",
             "product_lifetime": 15,
-            # Required by fill_mkts init path
-            "market_scaling_fractions": None,
-            "market_scaling_fractions_source": None,
+            # 100% of heating energy in the microsegment is associated with homes with zero cooling
+            # (for convenience, in reality this would be a small percentage)
+            "market_scaling_fractions": {"heating": 1, "cooling": 0},
+            "market_scaling_fractions_source": "unit test",
         }
 
-        # Master mseg data that should be returned by test
         user_master_mseg = {
           "carbon": {
             "competed": {
               "baseline": {
-                "2009": 6.141666666666666e-07,
-                "2010": 5.95e-07
+                "2009": 0.0000006141666667,
+                "2010": 0.000000595
               },
               "efficient": {
-                "2009": 2.68954770755886e-07,
-                "2010": 2.605613382899628e-07
+                "2009": 0.00000476598513,
+                "2010": 0.00000461725018
               }
             },
             "total": {
               "baseline": {
-                "2009": 4.9999999999999996e-06,
-                "2010": 5e-06
+                "2009": 0.00000500,
+                "2010": 0.00000500
               },
               "efficient": {
-                "2009": 4.654788104089219e-06,
-                "2010": 4.320349442379182e-06
+                "2009": 0.000009151818463,
+                "2010": 0.00001317406864
               }
             }
           },
@@ -18817,44 +18884,44 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
             "carbon": {
                 "competed": {
                   "baseline": {
-                    "2009": 6.141666666666666e-07,
-                    "2010": 5.95e-07
+                    "2009": 0.0000006141666667,
+                    "2010": 0.000000595
                   },
                   "efficient": {
-                    "2009": 2.68954770755886e-07,
-                    "2010": 2.605613382899628e-07
+                    "2009": 0.00000476598513,
+                    "2010": 0.00000461725018
                   }
                 },
                 "total": {
                   "baseline": {
-                    "2009": 4.9999999999999996e-06,
-                    "2010": 5e-06
+                    "2009": 0.00000500,
+                    "2010": 0.00000500
                   },
                   "efficient": {
-                    "2009": 4.654788104089219e-06,
-                    "2010": 4.320349442379182e-06
+                    "2009": 0.000009151818463,
+                    "2010": 0.00001317406864
                   }
                 }
             },
             "energy": {
               "competed": {
                 "baseline": {
-                  "2009": 135.1166667,
+                  "2009": 135.11666666666667,
                   "2010": 130.9
                 },
                 "efficient": {
-                  "2009": 202.3690582,
-                  "2010": 196.0536059
+                  "2009": 5719.182156,
+                  "2010": 5540.700216
                 }
               },
               "total": {
                 "baseline": {
-                  "2009": 1100,
-                  "2010": 1100
+                  "2009": 1100.0,
+                  "2010": 1100.0
                 },
                 "efficient": {
-                  "2009": 1167.252392,
-                  "2010": 1232.405998
+                  "2009": 6684.065489,
+                  "2010": 12093.86571
                 }
               }
             },
@@ -18888,8 +18955,8 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                 "2010": 11.899999999999999
               },
               "efficient": {
-                "2009": 5.379095415117721,
-                "2010": 5.211226765799257
+                "2009": 95.3197026,
+                "2010": 92.34500361
               }
             },
             "total": {
@@ -18898,8 +18965,8 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
                 "2010": 100.0
               },
               "efficient": {
-                "2009": 93.09576208178439,
-                "2010": 86.40698884758365
+                "2009": 183.0363693,
+                "2010": 263.4813729
               }
             }
           },
@@ -18934,139 +19001,102 @@ class MarketUpdatesTest(unittest.TestCase, CommonMethods):
           }
         }
 
-        # Breakout data that should be returned by the test
         user_mseg_breakout = {
-            "baseline": {
-                  "Computers and Electronics": {},
-                  "Cooking": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Cooling (Env.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Cooling (Equip.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Heating (Env.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Heating (Equip.)": {
-                    "Electric": {
-                      "2009": 0,
-                      "2010": 0
-                    },
-                    "Non-Electric": {
-                      "2009": 95.0,
-                      "2010": 90.0
-                    }
-                  },
-                  "Lighting": {},
-                  "Other": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Refrigeration": {},
-                  "Ventilation": {},
-                  "Water Heating": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  }
-                },
-            "efficient": {
-                  "Computers and Electronics": {},
-                  "Cooking": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Cooling (Env.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Cooling (Equip.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Heating (Env.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Heating (Equip.)": {
-                    "Electric": {
-                      "2009": 1.73283767,
-                      "2010": 3.374473358
-                    },
-                    "Non-Electric": {
-                      "2009": 89.17333333,
-                      "2010": 78.65333333
-                    }
-                  },
-                  "Lighting": {},
-                  "Other": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Refrigeration": {},
-                  "Ventilation": {},
-                  "Water Heating": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  }
-                },
-            "savings": {
-                  "Computers and Electronics": {},
-                  "Cooking": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Cooling (Env.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Cooling (Equip.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Heating (Env.)": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Heating (Equip.)": {
-                    "Electric": {
-                      "2009": -1.7328376703841428,
-                      "2010": -3.374473358116475
-                    },
-                    "Non-Electric": {
-                      "2009": 5.826666666666668,
-                      "2010": 11.346666666666664
-                    }
-                  },
-                  "Lighting": {},
-                  "Other": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  },
-                  "Refrigeration": {},
-                  "Ventilation": {},
-                  "Water Heating": {
-                    "Electric": {},
-                    "Non-Electric": {}
-                  }
-                }
-        }
+             'baseline': OrderedDict([('Heating (Equip.)',
+                                       OrderedDict([('Electric', {'2009': 0, '2010': 0}),
+                                                    ('Non-Electric',
+                                                     {'2009': 95.0, '2010': 90.0})])),
+                                      ('Cooling (Equip.)',
+                                       OrderedDict([('Electric', {'2009': 0, '2010': 0}),
+                                                    ('Non-Electric', {})])),
+                                      ('Heating (Env.)',
+                                       OrderedDict([('Electric', {}),
+                                                    ('Non-Electric', {})])),
+                                      ('Cooling (Env.)',
+                                       OrderedDict([('Electric', {}),
+                                                    ('Non-Electric', {})])),
+                                      ('Ventilation', {}),
+                                      ('Lighting', {}),
+                                      ('Water Heating',
+                                       OrderedDict([('Electric', {}),
+                                                    ('Non-Electric', {})])),
+                                      ('Refrigeration', {}),
+                                      ('Cooking',
+                                       OrderedDict([('Electric', {}),
+                                                    ('Non-Electric', {})])),
+                                      ('Computers and Electronics', {}),
+                                      ('Other',
+                                       OrderedDict([('Electric', {}),
+                                                    ('Non-Electric', {})]))]),
+             'efficient': OrderedDict([('Heating (Equip.)',
+                                        OrderedDict([('Electric',
+                                                      {'2009': 2.166047087980175,
+                                                       '2010': 4.218091697645605}),
+                                                     ('Non-Electric',
+                                                      {'2009': 87.71666666666667,
+                                                       '2010': 75.81666666666666})])),
+                                       ('Cooling (Equip.)',
+                                        OrderedDict([('Electric',
+                                                      {'2009': 54.35323383084577,
+                                                       '2010': 105.8457711442786}),
+                                                     ('Non-Electric', {})])),
+                                       ('Heating (Env.)',
+                                        OrderedDict([('Electric', {}),
+                                                     ('Non-Electric', {})])),
+                                       ('Cooling (Env.)',
+                                        OrderedDict([('Electric', {}),
+                                                     ('Non-Electric', {})])),
+                                       ('Ventilation', {}),
+                                       ('Lighting', {}),
+                                       ('Water Heating',
+                                        OrderedDict([('Electric', {}),
+                                                     ('Non-Electric', {})])),
+                                       ('Refrigeration', {}),
+                                       ('Cooking',
+                                        OrderedDict([('Electric', {}),
+                                                     ('Non-Electric', {})])),
+                                       ('Computers and Electronics', {}),
+                                       ('Other',
+                                        OrderedDict([('Electric', {}),
+                                                     ('Non-Electric', {})]))]),
+             'savings': OrderedDict([('Heating (Equip.)',
+                                      OrderedDict([('Electric',
+                                                    {'2009': -2.166047087980175,
+                                                     '2010': -4.218091697645605}),
+                                                   ('Non-Electric',
+                                                    {'2009': 7.283333333333331,
+                                                     '2010': 14.183333333333337})])),
+                                     ('Cooling (Equip.)',
+                                      OrderedDict([('Electric',
+                                                    {'2009': -54.35323383084577,
+                                                     '2010': -105.8457711442786}),
+                                                   ('Non-Electric', {})])),
+                                     ('Heating (Env.)',
+                                      OrderedDict([('Electric', {}),
+                                                   ('Non-Electric', {})])),
+                                     ('Cooling (Env.)',
+                                      OrderedDict([('Electric', {}),
+                                                   ('Non-Electric', {})])),
+                                     ('Ventilation', {}),
+                                     ('Lighting', {}),
+                                     ('Water Heating',
+                                      OrderedDict([('Electric', {}),
+                                                   ('Non-Electric', {})])),
+                                     ('Refrigeration', {}),
+                                     ('Cooking',
+                                      OrderedDict([('Electric', {}),
+                                                   ('Non-Electric', {})])),
+                                     ('Computers and Electronics', {}),
+                                     ('Other',
+                                      OrderedDict([('Electric', {}),
+                                                   ('Non-Electric', {})]))])}
 
-        # Build the measure and assign CA backup fraction (remain_frac = 0.20)
         measure = ecm_prep.Measure(
             os.getcwd(), hv, None, base_state_meas.usr_opts, **meas_def
         )
-        measure.backup_fuel_fraction = pd.DataFrame(
-            [{"state": "CA", "remain_frac": 0.20}])
-        # Calculate markets data for dual fuel measure
+        # Calculate markets data for cooling additions measure
         measure.fill_mkts(
-            mseg_in_dual, cpl_in_dual, self.convert_data, self.tsv_data, opts,
+            mseg_in, cpl_in, self.convert_data, self.tsv_data, opts,
             ctrb_ms_pkg_prep=[], tsv_data_nonfs=None
         )
         # Check high-level markets data against expected values
@@ -128813,12 +128843,12 @@ class CleanUpTest(unittest.TestCase, CommonMethods):
              "name", "remove", "retro_rate", 'tech_switch_to', 'technology',
              'end_use', 'technology_type', "htcl_tech_link",
              'yrs_on_mkt', 'measure_type', 'usr_opts', 'fuel_switch_to',
-             'backup_fuel_fraction'],
+             'backup_fuel_fraction', 'hp_convert_flag', 'add_cool_anchor_tech'],
             ["market_entry_year", "market_exit_year", "markets",
              "name", "remove", "retro_rate", 'tech_switch_to', 'technology',
              'end_use', 'technology_type', "htcl_tech_link",
              'yrs_on_mkt', 'measure_type', 'usr_opts', 'fuel_switch_to',
-             'backup_fuel_fraction'],
+             'backup_fuel_fraction', 'hp_convert_flag', 'add_cool_anchor_tech'],
             ['benefits', 'bldg_type', 'climate_zone', 'end_use', 'fuel_type',
              'tech_switch_to', "htcl_tech_link", "technology",
              "technology_type", "market_entry_year", "market_exit_year",
